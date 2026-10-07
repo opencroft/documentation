@@ -1,0 +1,111 @@
+{
+  "id": "opencroft.documentation",
+  "name": "Documentation",
+  "version": "0.1.0",
+  "description": "Documentation App — clone, browse and edit a docs git repository added to a space.",
+  "provides": {
+    "apps": [
+      {
+        "type": "documentation",
+        "title": "Documentation",
+        "description": "Browse and edit a documentation repository.",
+        "icon": "BookOpen",
+        "parameters": [
+          { "id": "repoUrl", "label": "Repository URL", "required": true, "placeholder": "https://example.com/docs.git" },
+          { "id": "branch", "label": "Branch", "placeholder": "main" },
+          { "id": "tokenSecret", "label": "Access token", "description": "Secrets Store key holding the git token, as <storeId>/<key>" },
+          { "id": "username", "label": "Git username", "placeholder": "x-access-token" }
+        ],
+        "actions": [
+          {
+            "id": "search",
+            "description": "Search the published markdown content of this documentation repository (the branch as pushed to its remote; drafts never match). Returns matching files with line snippets.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "pattern": { "type": "string", "description": "Regex pattern (case-insensitive)." },
+                "maxResults": { "type": "number", "description": "Maximum matches to return (default 50)." }
+              },
+              "required": ["pattern"]
+            }
+          },
+          {
+            "id": "read",
+            "description": "Read a doc by its relative path (must end with .md). Default reads the PUBLISHED version, the one readers see (the branch as pushed to its remote); a page never published has none and the read fails. Pass version \"draft\" for saved-but-unpublished working-tree edits. Optional offset/limit slice by 1-indexed line.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "path": { "type": "string", "description": "Relative path within the repository." },
+                "version": { "type": "string", "enum": ["published", "draft"], "description": "Which content to read: \"published\" (default) or \"draft\" (the unpublished draft, including what people are typing into it right now)." },
+                "offset": { "type": "number", "description": "1-indexed line to start from. Default 1." },
+                "limit": { "type": "number", "description": "Number of lines to return. Default: read to end." }
+              },
+              "required": ["path"]
+            }
+          },
+          {
+            "id": "edit",
+            "description": "Replace an exact string in a doc. Fails if oldString is not unique unless replaceAll is true. Mirrors the behavior of the regular Edit tool.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "path": { "type": "string", "description": "Relative path within the repository." },
+                "oldString": { "type": "string", "description": "The exact text to replace." },
+                "newString": { "type": "string", "description": "The text to replace with." },
+                "replaceAll": { "type": "boolean", "description": "Replace every occurrence (default false)." }
+              },
+              "required": ["path", "oldString", "newString"]
+            }
+          },
+          {
+            "id": "write",
+            "description": "Create or overwrite a doc. Creates parent directories as needed. Path must end with .md.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "path": { "type": "string", "description": "Relative path within the repository." },
+                "content": { "type": "string", "description": "Full file content (UTF-8)." }
+              },
+              "required": ["path", "content"]
+            }
+          },
+          {
+            "id": "reply",
+            "description": "Post a reply to a comment thread anchored on a doc. Use when responding to a user comment the agent was mentioned in.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "docPath": { "type": "string", "description": "Relative path of the doc the comment is anchored to." },
+                "commentId": { "type": "string", "description": "The id of the comment being replied to." },
+                "message": { "type": "string", "description": "Reply text." },
+                "author": { "type": "string", "description": "Author label shown in the thread. Defaults to the calling agent." }
+              },
+              "required": ["docPath", "commentId", "message"]
+            }
+          },
+          {
+            "id": "publish",
+            "description": "Commit and push a single file. Other staged changes are not pulled into the commit.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "path": { "type": "string", "description": "Relative path of the file to commit." },
+                "message": { "type": "string", "description": "Git commit message." }
+              },
+              "required": ["path", "message"]
+            }
+          },
+          {
+            "id": "pull",
+            "description": "Pull the latest changes from the remote (rebase).",
+            "inputSchema": {
+              "type": "object",
+              "properties": {}
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "nodes": []
+}
