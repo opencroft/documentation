@@ -1,13 +1,11 @@
-import { AppLink, legacy } from '@opencroft/client'
+import { AppLink } from '@opencroft/client/app'
+import { cn } from 'cn'
+import { ArrowLeft } from 'lucide-react'
 import type { ReactNode } from 'react'
 
 import { type PanelTab, PanelTabStrip } from '@/components/ui/layouts/panel-tab-strip'
-
-import { cn } from 'cn'
 import { headingQuery } from './doc-routes'
 import type { LogEntry, TocItem } from './types'
-
-const { icons } = legacy
 
 export type OutlineTab = 'toc' | 'history'
 
@@ -114,7 +112,7 @@ function HistoryList({
           onClick={onBackToCurrent}
           className='flex items-center gap-1 text-xs text-primary hover:underline mb-2'
         >
-          <icons.ArrowLeft className='size-3' /> Back to current
+          <ArrowLeft className='size-3' /> Back to current
         </button>
       )}
       {log.length === 0 ? (

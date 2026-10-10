@@ -1,11 +1,11 @@
-import type { AppActionContext, AppActionHandler } from '@opencroft/server'
-import host from '@opencroft/server'
+import type { AppActionContext, AppActionHandler } from '@opencroft/server/apps'
+import { path } from '@opencroft/server/system'
 
-import { appendComment, broadcastCommentsUpdated, createComment, readComments } from './docs-comments'
 import { type DraftEditor, deletePage, editDraft, publishPage, pullDocs, readDraft } from './docs-drafts'
 import { deleteEmptyDirs, resolveDocPath, resolveNamespaceRoot } from './docs-files'
 import { docsShow } from './docs-git'
 import { searchDocs } from './docs-search'
+import { formatAnswer } from './search-answer'
 
 // Agent-invokable actions of the Documentation App, dispatched by the host's
 // `app_call` MCP tool. Each runs against ONE instance (ctx names it); the
@@ -16,14 +16,38 @@ import { searchDocs } from './docs-search'
 
 // ─── Helpers ────────────────────────────────────────────────────────────
 
+/** Pages a search answers with by default, and at most: enough to choose from, small enough to read whole. */
+const SEARCH_LIMIT = 6
+const SEARCH_LIMIT_MAX = 100
+/** Matched lines shown per page; the page itself is a `read` away. */
+const SEARCH_LINES_PER_PAGE = 3
+
 /**
- * The instance's namespace — how the shared file/comment helpers key their
+ * The instance's namespace — how the shared file helpers key their
  * roots. The instance ADDRESS, `<space>.<slug>`, both minted by the host:
  * globally unique by construction, so two instances can never shadow each
  * other the way name-derived namespaces could.
  */
 function nsOf(ctx: AppActionContext): string {
   return `${ctx.spaceSlug}.${ctx.slug}`
+}
+
+/**
+ * The documentation apps a search covers: this one by default, every one for
+ * `"*"`, or the addresses listed (this one is not added unless listed).
+ */
+function searchedApps(ctx: AppActionContext, apps: unknown): string[] | undefined {
+  if (apps === undefined || apps === null) {
+    return [nsOf(ctx)]
+  }
+  if (apps === '*') {
+    return undefined
+  }
+  const list = typeof apps === 'string' ? [apps] : apps
+  if (!Array.isArray(list) || list.length === 0 || !list.every((app) => typeof app === 'string')) {
+    throw new Error('apps is "*" or a list of documentation app addresses, <space>.<app-slug>.')
+  }
+  return list.includes('*') ? undefined : list
 }
 
 function sliceLines(content: string, offset?: number, limit?: number): string {
@@ -61,14 +85,19 @@ async function readPublishedOrNull(ctx: AppActionContext, relative: string): Pro
 // ─── Actions ────────────────────────────────────────────────────────────
 
 export const docsAppActions: Record<string, AppActionHandler> = {
-  // Searches the published version via `git grep`, so drafts never match.
+  // Searches the published version, so drafts never match. `maxResults` is
+  // taken as another name for `limit`.
   search: async (ctx, args) => {
+    const query = args.query as string | undefined
     const pattern = args.pattern as string | undefined
-    if (!pattern) {
-      throw new Error('Missing required param: pattern')
-    }
-    const maxResults = (args.maxResults as number | undefined) ?? 50
-    return searchDocs(nsOf(ctx), pattern, maxResults)
+    const limit = Number(args.limit ?? args.maxResults ?? SEARCH_LIMIT)
+    const answer = await searchDocs(searchedApps(ctx, args.apps), {
+      query,
+      pattern,
+      limit: Math.min(Math.max(1, Number.isFinite(limit) ? limit : SEARCH_LIMIT), SEARCH_LIMIT_MAX),
+      perPage: SEARCH_LINES_PER_PAGE,
+    })
+    return formatAnswer(answer, pattern ? `pattern ${pattern}` : JSON.stringify(query ?? ''))
   },
 
   // Default: the published version, the same one readers see in the App. A
@@ -124,7 +153,9 @@ export const docsAppActions: Record<string, AppActionHandler> = {
         throw new Error('oldString not found in file')
       }
       if (occurrences > 1 && !replaceAll) {
-        throw new Error(`oldString is not unique (${occurrences} matches). Set replaceAll=true or provide more context.`)
+        throw new Error(
+          `oldString is not unique (${occurrences} matches). Set replaceAll=true or provide more context.`,
+        )
       }
       return replaceAll ? content.split(oldString).join(newString) : content.replace(oldString, () => newString)
     })
@@ -140,24 +171,6 @@ export const docsAppActions: Record<string, AppActionHandler> = {
     await resolveDocPath(nsOf(ctx), relative)
     await editDraft(ctx.instanceId, relative, agentOf(ctx), () => content)
     return `Wrote ${content.length} bytes to ${relative}.`
-  },
-
-  reply: async (ctx, args) => {
-    const docPath = args.docPath as string | undefined
-    const commentId = args.commentId as string | undefined
-    const message = args.message as string | undefined
-    if (!docPath || !commentId || !message) {
-      throw new Error('Missing required params: docPath, commentId, message')
-    }
-    const namespace = nsOf(ctx)
-    const author = (args.author as string | undefined) ?? ctx.callerAgent ?? 'agent'
-    await resolveDocPath(namespace, docPath)
-    const existing = await readComments(namespace, docPath)
-    const reply = createComment(author, message)
-    await appendComment(namespace, docPath, reply, commentId)
-    // Push live refresh to any open doc viewers. Best-effort/no-op on hosts without host.events.
-    broadcastCommentsUpdated(docPath)
-    return { replyId: reply.id, parentId: commentId, threads: existing.length }
   },
 
   publish: async (ctx, args) => {
@@ -184,7 +197,7 @@ export const docsAppActions: Record<string, AppActionHandler> = {
     await deletePage(ctx.instanceId, filePath, callerOf(ctx))
     try {
       const root = await resolveNamespaceRoot(namespace)
-      await deleteEmptyDirs(namespace, host.path.dirname(host.path.resolve(root, filePath)))
+      await deleteEmptyDirs(namespace, path.dirname(path.resolve(root, filePath)))
     } catch {
       // best-effort cleanup only
     }

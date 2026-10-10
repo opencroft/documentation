@@ -1,11 +1,12 @@
-import { AppLink, legacy } from '@opencroft/client'
-
+import { AppLink } from '@opencroft/client/app'
+import { Button, ScrollArea } from '@opencroft/client/ui'
 import { cn } from 'cn'
+import { ChevronDown, FileText, Pencil, Trash2 } from 'lucide-react'
+import type { MouseEvent } from 'react'
+import { useLayoutEffect, useRef } from 'react'
+
 import { docAppPath } from './doc-routes'
 import type { DocEntry } from './types'
-
-const { icons, React, Button, ScrollArea } = legacy
-const { useLayoutEffect, useRef } = React
 
 interface TreeProps {
   entries: DocEntry[]
@@ -27,7 +28,8 @@ function TreeLevel({ entries, depth, ...tree }: TreeProps & { depth: number }) {
       {entries.map((entry) => {
         if (entry.type === 'directory') {
           const isExpanded = expandedPaths.has(entry.path)
-          const hasChildren = entry.children && entry.children.length > 0
+          const children = entry.children ?? []
+          const hasChildren = children.length > 0
           return (
             <li key={entry.path}>
               <button
@@ -37,7 +39,7 @@ function TreeLevel({ entries, depth, ...tree }: TreeProps & { depth: number }) {
                 style={{ paddingLeft: `${depth * 12 + 4}px` }}
               >
                 {hasChildren && (
-                  <icons.ChevronDown
+                  <ChevronDown
                     className={cn(
                       'size-3.5 shrink-0 text-muted-foreground transition-transform',
                       !isExpanded && '-rotate-90',
@@ -47,7 +49,7 @@ function TreeLevel({ entries, depth, ...tree }: TreeProps & { depth: number }) {
                 {!hasChildren && <span className='w-3.5 shrink-0' />}
                 <span className='truncate font-medium'>{entry.name}</span>
               </button>
-              {isExpanded && hasChildren && <TreeLevel {...tree} entries={entry.children!} depth={depth + 1} />}
+              {isExpanded && hasChildren && <TreeLevel {...tree} entries={children} depth={depth + 1} />}
             </li>
           )
         }
@@ -66,19 +68,19 @@ function TreeLevel({ entries, depth, ...tree }: TreeProps & { depth: number }) {
               )}
               style={{ paddingLeft: `${depth * 12 + 4}px` }}
             >
-              <icons.FileText className='size-3.5 shrink-0 opacity-50' />
+              <FileText className='size-3.5 shrink-0 opacity-50' />
               <span className='truncate'>{entry.name.replace(/\.md$/, '')}</span>
               {entry.draft ? (
                 <span className='ml-auto shrink-0 rounded border px-1 text-[10px] leading-4 text-muted-foreground'>
                   Draft
                 </span>
               ) : changedFiles.has(entry.path) ? (
-                <icons.Pencil className='ml-auto size-3 shrink-0 text-orange-500' />
+                <Pencil className='ml-auto size-3 shrink-0 text-orange-500' />
               ) : null}
             </AppLink>
             <button
               type='button'
-              onClick={(e: React.MouseEvent) => {
+              onClick={(e: MouseEvent) => {
                 e.preventDefault()
                 e.stopPropagation()
                 onDelete(entry.path)
@@ -87,7 +89,7 @@ function TreeLevel({ entries, depth, ...tree }: TreeProps & { depth: number }) {
               aria-label='Delete'
               className='absolute right-1 top-1/2 -translate-y-1/2 inline-flex items-center justify-center size-5 rounded-sm text-muted-foreground opacity-0 group-hover/file:opacity-100 focus-visible:opacity-100 hover:bg-destructive/10 hover:text-destructive transition-opacity'
             >
-              <icons.Trash2 className='size-3.5' />
+              <Trash2 className='size-3.5' />
             </button>
           </li>
         )
@@ -112,6 +114,7 @@ function DocTree(props: TreeProps) {
 
   // Also when the tree or an open folder changes: rows above the selected one
   // move, and the bar has to follow them.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: entries and expandedPaths are not read; a change to either moves the rows, so the bar is measured again
   useLayoutEffect(() => {
     const nav = navRef.current
     const indicator = indicatorRef.current
@@ -168,7 +171,7 @@ export function DocTreePanel({
           aria-pressed={unpublishedOnly}
           className={cn('ml-auto', !unpublishedOnly && 'text-muted-foreground')}
         >
-          <icons.Pencil className='size-3' />
+          <Pencil className='size-3' />
         </Button>
       </div>
       <ScrollArea className='min-h-0 flex-1'>

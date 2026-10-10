@@ -16,37 +16,10 @@ export interface LogEntry {
   date: string
 }
 
-export interface DocSearchMatch {
-  line: number
-  text: string
-  heading?: string
-}
-
-export interface DocSearchResult {
-  namespace: string
-  path: string
-  title?: string
-  matches: DocSearchMatch[]
-}
-
-export interface Anchor {
-  quote: string
-  prefix?: string
-  suffix?: string
-}
-
-export interface Comment {
-  id: string
-  author: string
-  message: string
-  timestamp: number
-  anchor?: Anchor
-  replies: Comment[]
-}
+export type { DocSearchAnswer, DocSearchMatch, DocSearchResult } from '../../server/docs-search'
 
 export interface NamespaceEntry {
   id: string
   namespace: string
   name: string
 }
-

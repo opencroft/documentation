@@ -1,12 +1,11 @@
-import { callAppAction, legacy, MarkdownEditor } from '@opencroft/client'
+import { callAppAction, invoke } from '@opencroft/client/actions'
+import { MarkdownEditor } from '@opencroft/client/markdown'
+import { cn } from 'cn'
+import { useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 
 import { DocDraftActions, type DocDraftPending } from '@/components/ui/documentation/doc-draft-actions'
-
-import { cn } from 'cn'
 import { DocDiff } from './doc-diff'
-
-const { createPortal, invoke, React } = legacy
-const { useRef, useState } = React
 
 interface DocEditorProps {
   /** The App instance; publishing runs as its action, as the signed-in person. */
@@ -56,7 +55,15 @@ const ignoreHeading = () => {}
  * server does both with the draft closed, and the other editors reopen on what
  * is left.
  */
-export function DocEditor({ instanceId, namespace, filePath, document, onPublish, onDiscard, draftBarSlot }: DocEditorProps) {
+export function DocEditor({
+  instanceId,
+  namespace,
+  filePath,
+  document,
+  onPublish,
+  onDiscard,
+  draftBarSlot,
+}: DocEditorProps) {
   const [pending, setPending] = useState<DocDraftPending | null>(null)
   const [description, setDescription] = useState('')
   // Why the last publish, discard or look at the changes failed; the draft is as it was.
@@ -84,7 +91,8 @@ export function DocEditor({ instanceId, namespace, filePath, document, onPublish
     run(
       'publish',
       // As an App action, so the commit names the signed-in person.
-      () => callAppAction(instanceId, 'publish', { path: filePath, message: description.trim() || `Update ${filePath}` }),
+      () =>
+        callAppAction(instanceId, 'publish', { path: filePath, message: description.trim() || `Update ${filePath}` }),
       () => {
         setDescription('')
         onPublish()

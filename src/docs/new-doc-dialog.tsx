@@ -1,12 +1,4 @@
-import { legacy } from '@opencroft/client'
-
-import { FolderPicker } from './folder-picker'
-import { docFileName, folderTree, joinPath, nameHolder, treePaths } from './new-doc'
-import { slugify } from './slug'
-import type { DocEntry } from './types'
-
-const {
-  React,
+import {
   Button,
   Dialog,
   DialogContent,
@@ -16,8 +8,14 @@ const {
   DialogTitle,
   Input,
   Label,
-} = legacy
-const { useId, useMemo, useState } = React
+} from '@opencroft/client/ui'
+import type { ChangeEvent, KeyboardEvent } from 'react'
+import { useId, useMemo, useState } from 'react'
+
+import { FolderPicker } from './folder-picker'
+import { docFileName, folderTree, joinPath, nameHolder, treePaths } from './new-doc'
+import { slugify } from './slug'
+import type { DocEntry } from './types'
 
 interface NewDocDialogProps {
   open: boolean
@@ -121,11 +119,11 @@ export function NewDocDialog({ open, onOpenChange, tree, initialFolder, onCreate
             value={title}
             placeholder='Getting started'
             aria-invalid={titleError !== null}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+            onChange={(e: ChangeEvent<HTMLInputElement>) => {
               setTitle(e.target.value)
               setCreateError(null)
             }}
-            onKeyDown={(e: React.KeyboardEvent) => {
+            onKeyDown={(e: KeyboardEvent) => {
               if (e.key === 'Enter') {
                 e.preventDefault()
                 create()

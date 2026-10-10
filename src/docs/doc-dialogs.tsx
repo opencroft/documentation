@@ -1,6 +1,4 @@
-import { legacy } from '@opencroft/client'
-
-const {
+import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -9,7 +7,7 @@ const {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} = legacy
+} from '@opencroft/client/ui'
 
 export function DeleteDocDialog({
   target,

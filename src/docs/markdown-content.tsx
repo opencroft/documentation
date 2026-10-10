@@ -1,5 +1,9 @@
-import { AppLink, CodeBlock, legacy, markdownDirectiveBlocks, MermaidDiagram } from '@opencroft/client'
+import { AppLink } from '@opencroft/client/app'
+import { CodeBlock } from '@opencroft/client/code'
+import { MermaidDiagram, markdownDirectiveBlocks } from '@opencroft/client/markdown'
+import type { Root, RootContent } from 'hast'
 import type { ComponentProps } from 'react'
+import { useCallback } from 'react'
 import type { ExtraProps } from 'react-markdown'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -7,9 +11,6 @@ import remarkGfm from 'remark-gfm'
 import { docLinkTo } from './doc-routes'
 import { rehypeHeadingIds } from './heading-ids'
 import type { TocItem } from './types'
-
-const { React } = legacy
-const { useCallback } = React
 
 /**
  * Stamp every rendered element with the markdown lines it came from.
@@ -26,17 +27,18 @@ const { useCallback } = React
  * ancestor is the whole lookup.
  */
 function rehypeSourceLines() {
-  return (tree: any) => {
-    const walk = (node: any) => {
-      const start = node?.position?.start?.line
-      if (node?.type === 'element' && start) {
-        node.properties = node.properties ?? {}
+  return (tree: Root) => {
+    const walk = (node: Root | RootContent) => {
+      const start = node.position?.start.line
+      if (node.type === 'element' && start) {
         // hast camelCase -> data-source-line on the rendered element.
         node.properties.dataSourceLine = String(start)
-        node.properties.dataSourceLineEnd = String(node.position.end?.line ?? start)
+        node.properties.dataSourceLineEnd = String(node.position?.end.line ?? start)
       }
-      for (const child of node?.children ?? []) {
-        walk(child)
+      if ('children' in node) {
+        for (const child of node.children) {
+          walk(child)
+        }
       }
     }
     walk(tree)
@@ -47,8 +49,7 @@ function rehypeSourceLines() {
 export function extractToc(html: string): TocItem[] {
   const items: TocItem[] = []
   const re = /<h([2-3])[^>]*id="([^"]*)"[^>]*>(.*?)<\/h\1>/g
-  let m
-  while ((m = re.exec(html)) !== null) {
+  for (const m of html.matchAll(re)) {
     items.push({ id: m[2], text: m[3].replace(/<[^>]+>/g, ''), level: +m[1] })
   }
   return items
@@ -94,7 +95,7 @@ function fencedCode(node: ExtraProps['node']): { code: string; language?: string
 /**
  * A fenced block, drawn by the components the host shares with every extension:
  * a `mermaid` fence as the picture somebody wrote in text, everything else as
- * highlighted code with a copy control. Both come from `@opencroft/client` so
+ * highlighted code with a copy control. Both come from the host's client modules so
  * that shiki and mermaid stay one copy on the page.
  *
  * The replacement is WRAPPED, and the wrapper carries the source lines by hand.
@@ -157,8 +158,8 @@ interface DocMarkdownProps {
   /** A link to a heading of this page was clicked. */
   onHeadingClick: (id: string) => void
   /**
-   * Stamp the source lines and the heading ids: what the outline, the comments
-   * and the chat's quoting find their places on the page by. Only for the page
+   * Stamp the source lines and the heading ids: what the outline and the chat's
+   * quoting find their places on the page by. Only for the page
    * itself -- a copy drawn a block at a time would number its lines from each
    * block and repeat the page's heading ids.
    */
@@ -185,7 +186,7 @@ export function DocMarkdown({ content, currentPath, onHeadingClick, anchors }: D
       components={{
         ...markdownDirectiveBlocks?.components,
         pre: MarkdownPre,
-        a: ({ href, children, ...rest }: any) => {
+        a: ({ node, href, children, ...rest }: ComponentProps<'a'> & ExtraProps) => {
           if (href && /^https?:/i.test(href)) {
             return (
               <a href={href} target='_blank' rel='noopener noreferrer' {...rest}>
@@ -194,7 +195,7 @@ export function DocMarkdown({ content, currentPath, onHeadingClick, anchors }: D
             )
           }
           const to = href && !/^mailto:/i.test(href) ? docLinkTo(currentPath, href) : null
-          if (to === null) {
+          if (!href || to === null) {
             return (
               <a href={href} {...rest}>
                 {children}
@@ -234,13 +235,16 @@ export function MarkdownContent({
   onHeadingClick: (id: string) => void
   onRendered: (html: string) => void
 }) {
+  // A callback ref runs again whenever its identity changes, so new `content`
+  // recaptures the rendered HTML even though the callback never reads it.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: content is not read; a new one must give the ref a new identity so React calls it again
   const ref = useCallback(
     (n: HTMLDivElement | null) => {
       if (n) {
         onRendered(n.innerHTML)
       }
     },
-    [content],
+    [content, onRendered],
   )
   return (
     <div className='prose-docs' ref={ref}>

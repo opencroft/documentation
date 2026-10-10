@@ -1,15 +1,14 @@
-import type { AppComponentProps } from '@opencroft/client'
-import { legacy, useAppLocation } from '@opencroft/client'
+import { invoke } from '@opencroft/client/actions'
+import type { AppComponentProps } from '@opencroft/client/app'
+import { useAppLocation } from '@opencroft/client/app'
+import { BookOpen } from 'lucide-react'
+import { useEffect, useState } from 'react'
 
 import { LogoLoader } from '@/components/ui/logo-loader'
-
 import { ChatDock } from './docs/chat-panel'
 import { routeOf } from './docs/doc-routes'
 import { DocsBrowser } from './docs/docs-page'
 import type { NamespaceEntry } from './docs/types'
-
-const { icons, invoke, React } = legacy
-const { useEffect, useState } = React
 
 /**
  * The Documentation App's component: one instance = one repository, locked
@@ -49,7 +48,7 @@ export function DocsAppView({ instanceId, spaceSlug }: AppComponentProps) {
   if (entry === null) {
     return (
       <div className='flex h-full w-full flex-col items-center justify-center gap-2 text-center text-sm text-muted-foreground'>
-        <icons.BookOpen className='size-8 text-muted-foreground/60' />
+        <BookOpen className='size-8 text-muted-foreground/60' />
         <p>This documentation instance could not be loaded.</p>
         <p>It may have been removed, or its repository is still being cloned.</p>
       </div>

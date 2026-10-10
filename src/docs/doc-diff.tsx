@@ -1,9 +1,7 @@
-import { legacy, MarkdownDiffView } from '@opencroft/client'
+import { MarkdownDiffView } from '@opencroft/client/markdown'
+import { useCallback } from 'react'
 
 import { DocMarkdown } from './markdown-content'
-
-const { React } = legacy
-const { useCallback } = React
 
 interface DocDiffProps {
   /** The earlier version; empty for a page that did not exist. */
@@ -25,10 +23,5 @@ export function DocDiff({ before, after, currentPath, onHeadingClick }: DocDiffP
     ),
     [currentPath, onHeadingClick],
   )
-  // This extension and the host deploy separately. A host that does not offer
-  // the diff view yet shows the later version as it is, rather than failing.
-  if (MarkdownDiffView === undefined) {
-    return <div className='prose-docs'>{renderBlock(after)}</div>
-  }
   return <MarkdownDiffView before={before} after={after} renderBlock={renderBlock} proseClassName='prose-docs' />
 }

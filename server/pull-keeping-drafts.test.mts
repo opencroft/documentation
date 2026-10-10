@@ -28,9 +28,13 @@ after(async () => {
 function gitIn(dir: string): Git {
   return async (...args) =>
     (
-      await run('git', ['-c', 'user.name=t', '-c', 'user.email=t@x', '-c', 'commit.gpgsign=false', '-C', dir, ...args], {
-        env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1' },
-      })
+      await run(
+        'git',
+        ['-c', 'user.name=t', '-c', 'user.email=t@x', '-c', 'commit.gpgsign=false', '-C', dir, ...args],
+        {
+          env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1' },
+        },
+      )
     ).stdout
 }
 
@@ -75,7 +79,9 @@ async function setup() {
   }
 }
 
-test('a pull brings in what changed upstream and keeps the drafts of other pages', { skip: !hasGit && 'git is not installed' }, async () => {
+test('a pull brings in what changed upstream and keeps the drafts of other pages', {
+  skip: !hasGit && 'git is not installed',
+}, async () => {
   const clone = await setup()
   await clone.publishElsewhere('other.md', 'Other, changed upstream\n')
   await clone.draft('page.md', 'One, drafted here\n\nTwo\n')
@@ -87,7 +93,9 @@ test('a pull brings in what changed upstream and keeps the drafts of other pages
   assert.equal(stashes, '', 'nothing left in a stash')
 })
 
-test('a page with a draft here that changed upstream is not pulled over: nothing changes, and the page is named', { skip: !hasGit && 'git is not installed' }, async () => {
+test('a page with a draft here that changed upstream is not pulled over: nothing changes, and the page is named', {
+  skip: !hasGit && 'git is not installed',
+}, async () => {
   const clone = await setup()
   await clone.publishElsewhere('page.md', 'One, changed upstream\n\nTwo\n')
   await clone.draft('page.md', 'One, drafted here\n\nTwo\n')

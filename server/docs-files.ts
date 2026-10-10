@@ -1,4 +1,4 @@
-import host from '@opencroft/server'
+import { fs, path } from '@opencroft/server/system'
 
 import { buildDocTree, type DocEntry } from './doc-tree'
 import { docsPublishedFiles, findDocNodeId, getDocsRoot } from './docs-git'
@@ -31,7 +31,7 @@ async function resolveSafe(namespace: string, filePath: string): Promise<{ root:
     throw new Error('Only .md files are editable')
   }
   const root = await resolveNamespaceRoot(namespace)
-  const resolved = host.path.resolve(root, filePath)
+  const resolved = path.resolve(root, filePath)
   if (!resolved.startsWith(root)) {
     throw new Error('Access denied')
   }
@@ -45,7 +45,7 @@ export async function resolveDocPath(namespace: string, filePath: string): Promi
 
 async function exists(filePath: string): Promise<boolean> {
   try {
-    await host.fs.access(filePath)
+    await fs.access(filePath)
     return true
   } catch {
     return false
@@ -78,15 +78,15 @@ export async function createFile(namespace: string, inputPath: string, title: st
   }
   const relative = normalizeNewPath(inputPath)
   const root = await resolveNamespaceRoot(namespace)
-  const resolved = host.path.resolve(root, relative)
+  const resolved = path.resolve(root, relative)
   if (!resolved.startsWith(root)) {
     throw new Error('Access denied')
   }
   if (await exists(resolved)) {
     throw new Error('A file with this name already exists.')
   }
-  await host.fs.mkdir(host.path.dirname(resolved), { recursive: true })
-  await host.fs.writeFile(resolved, `# ${heading}\n`, 'utf-8')
+  await fs.mkdir(path.dirname(resolved), { recursive: true })
+  await fs.writeFile(resolved, `# ${heading}\n`, 'utf-8')
   return relative
 }
 
@@ -95,12 +95,12 @@ export async function deleteEmptyDirs(namespace: string, dir: string): Promise<v
   const root = await resolveNamespaceRoot(namespace)
   let current = dir
   while (current.length > root.length && current.startsWith(root)) {
-    const entries = await host.fs.readdir(current)
+    const entries = await fs.readdir(current)
     if (entries.length > 0) {
       return
     }
-    await host.fs.rmdir(current)
-    current = host.path.dirname(current)
+    await fs.rmdir(current)
+    current = path.dirname(current)
   }
 }
 
@@ -108,10 +108,8 @@ export async function deleteEmptyDirs(namespace: string, dir: string): Promise<v
 
 /** Repository-relative paths of the `.md` files in the working tree, dot-directories skipped. */
 async function workingMarkdownFiles(root: string, dirPath = ''): Promise<string[]> {
-  let entries
-  try {
-    entries = await host.fs.readdir(host.path.resolve(root, dirPath), { withFileTypes: true })
-  } catch {
+  const entries = await fs.readdir(path.resolve(root, dirPath), { withFileTypes: true }).catch(() => null)
+  if (!entries) {
     return []
   }
   const paths: string[] = []
@@ -130,9 +128,6 @@ async function workingMarkdownFiles(root: string, dirPath = ''): Promise<string[
 export async function listFiles(namespace: string): Promise<DocEntry[]> {
   const root = await resolveNamespaceRoot(namespace)
   const nodeId = await findDocNodeId(namespace)
-  const [published, working] = await Promise.all([
-    nodeId ? docsPublishedFiles(nodeId) : [],
-    workingMarkdownFiles(root),
-  ])
+  const [published, working] = await Promise.all([nodeId ? docsPublishedFiles(nodeId) : [], workingMarkdownFiles(root)])
   return buildDocTree(published, working)
 }

@@ -1,8 +1,6 @@
-import type { AppFormProps } from '@opencroft/client'
-import { legacy, SecretSelector } from '@opencroft/client'
-
-const { React } = legacy
-const { useState } = React
+import type { AppFormProps } from '@opencroft/client/app'
+import { SecretSelector } from '@opencroft/client/secrets'
+import { useState } from 'react'
 
 // Custom parameter form for the Documentation App — the extension-owned
 // replacement for the host's generic one. Controlled: the host owns the
@@ -99,7 +97,9 @@ export function DocsAppForm({ params, onChange }: AppFormProps) {
               onChange={set('tokenSecret')}
               placeholder='Select the secret holding the token'
             />
-            <p className='text-xs text-muted-foreground'>Only the key is stored; the value stays in the Secrets Store.</p>
+            <p className='text-xs text-muted-foreground'>
+              Only the key is stored; the value stays in the Secrets Store.
+            </p>
           </div>
         </>
       )}

@@ -48,10 +48,15 @@ test('the folders that contain a path, outermost first', () => {
 })
 
 test('the taken paths are every page and folder at any depth', () => {
-  assert.deepEqual(
-    [...treePaths(TREE)].sort(),
-    ['api', 'api/auth.md', 'guides', 'guides/intro.md', 'guides/setup', 'guides/setup/install.md', 'index.md'],
-  )
+  assert.deepEqual([...treePaths(TREE)].sort(), [
+    'api',
+    'api/auth.md',
+    'guides',
+    'guides/intro.md',
+    'guides/setup',
+    'guides/setup/install.md',
+    'index.md',
+  ])
 })
 
 test('a page takes its name inside its own folder only', () => {

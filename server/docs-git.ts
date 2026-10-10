@@ -1,4 +1,6 @@
-import host from '@opencroft/server'
+import { apps, type HostAppInstance } from '@opencroft/server/apps'
+import { secrets as hostSecrets } from '@opencroft/server/secrets'
+import { execFile, fs } from '@opencroft/server/system'
 
 import { commitAs } from './commit-identity'
 import { pullKeepingDrafts } from './pull-keeping-drafts'
@@ -16,28 +18,11 @@ interface DocsSourceData {
 // ─── App instances are the docs sources ─────────────────────────────────
 // A documentation source is a Documentation App instance (added to a space
 // via provides.apps): its clone lives in the instance's host-managed data
-// dir, and its instanceId is the source id everywhere below. Feature-detect
-// host.apps for hosts predating the Apps API.
-
-interface HostAppInstance {
-  instanceId: string
-  appSlug: string
-  spaceSlug: string
-  /** The instance's display name — the host's field, required at add time. */
-  name: string
-  /** The instance's slug — unique in its space; `<spaceSlug>.<slug>` is its address. */
-  slug: string
-  params: Record<string, string>
-  dataDir: string
-}
-
-const hostApps = (host as unknown as { apps?: { listInstances(appSlug?: string): Promise<HostAppInstance[]> } })
-  .apps
+// dir, and its instanceId is the source id everywhere below.
 
 export async function listDocAppInstances(): Promise<HostAppInstance[]> {
-  if (!hostApps) return []
   try {
-    return await hostApps.listInstances('documentation')
+    return await apps.listInstances('documentation')
   } catch {
     return []
   }
@@ -84,7 +69,7 @@ async function resolveSecrets(secretId: string | null): Promise<{ username?: str
     return {}
   }
   try {
-    const token = await host.secrets.get(address.slice(0, slash), address.slice(slash + 1))
+    const token = await hostSecrets.get(address.slice(0, slash), address.slice(slash + 1))
     return { username: instance.params.username || 'x-access-token', token: token ?? undefined }
   } catch (err) {
     console.error('[docs-git] Failed to resolve app instance secret:', err)
@@ -108,11 +93,11 @@ function buildAuthUrl(repoUrl: string, username?: string, token?: string): strin
 // `core.quotePath=false`: a path outside ASCII is printed as itself, not as a
 // quoted octal escape that matches no file the tree lists.
 async function gitExec(repoDir: string, ...args: string[]): Promise<string> {
-  return host.execFile('git', ['-c', 'safe.directory=*', '-c', 'core.quotePath=false', '-C', repoDir, ...args])
+  return execFile('git', ['-c', 'safe.directory=*', '-c', 'core.quotePath=false', '-C', repoDir, ...args])
 }
 
 function isCloned(repoDir: string): Promise<boolean> {
-  return host.fs
+  return fs
     .access(`${repoDir}/.git`)
     .then(() => true)
     .catch(() => false)
@@ -387,7 +372,7 @@ export async function gitAdd(repoDir: string, filePath: string): Promise<void> {
 }
 
 /**
- * Delete a doc and its sidecar files from the working tree, then commit
+ * Delete a doc from the working tree, then commit
  * and push the deletion. For uncommitted-only files, the commit/push
  * step is skipped — the file just gets removed.
  */
@@ -398,14 +383,11 @@ export async function docsDeleteFile(nodeId: string, filePath: string, author: s
     throw new Error('Repository is not cloned')
   }
 
-  // Always remove the sidecar comments file (untracked, not in HEAD).
-  await host.fs.rm(`${repoDir}/${filePath}.comments`).catch(() => {})
-
   const inHead = await fileInHead(repoDir, filePath)
   if (!inHead) {
     // Untracked / staged-new file — unstage if staged, then unlink.
     await gitExec(repoDir, 'rm', '--cached', '--ignore-unmatch', '--', filePath).catch(() => {})
-    await host.fs.rm(`${repoDir}/${filePath}`).catch(() => {})
+    await fs.rm(`${repoDir}/${filePath}`).catch(() => {})
     return
   }
 
@@ -508,7 +490,7 @@ export async function docsDiscardFile(nodeId: string, filePath: string): Promise
     // Not staged — fine, fall through to unlink.
   }
   try {
-    await host.fs.rm(`${repoDir}/${filePath}`)
+    await fs.rm(`${repoDir}/${filePath}`)
   } catch {
     // Already gone — fine.
   }

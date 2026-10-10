@@ -1,9 +1,10 @@
-import { AppActions, AppLink, AppTitle, legacy, useAppNavigate } from '@opencroft/client'
+import { AppActions, AppLink, AppTitle, useAppNavigate } from '@opencroft/client/app'
+import { Button, buttonVariants, Input } from '@opencroft/client/ui'
+import { Plus, Search, TableOfContents } from 'lucide-react'
+import type { ChangeEvent, FormEvent, KeyboardEvent } from 'react'
+import { useEffect, useState } from 'react'
 
 import { type DocsRoute, searchAppPath } from './doc-routes'
-
-const { icons, React, Button, Input, buttonVariants } = legacy
-const { useEffect, useState } = React
 
 /**
  * The title the bar shows for where the App is. A page has none: its path is
@@ -36,29 +37,30 @@ function TitleSearch({ route }: { route: DocsRoute }) {
   }, [shown])
 
   return (
-    <form
-      role='search'
-      onSubmit={(e: React.FormEvent) => {
-        e.preventDefault()
-        navigate(searchAppPath(value.trim()))
-      }}
-      className='relative w-64'
-    >
-      <icons.Search className='pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground' />
-      <Input
-        type='text'
-        value={value}
-        onChange={(e: React.ChangeEvent<HTMLInputElement>) => setValue(e.target.value)}
-        onKeyDown={(e: React.KeyboardEvent) => {
-          if (e.key === 'Escape') {
-            setValue('')
-          }
+    <search>
+      <form
+        onSubmit={(e: FormEvent) => {
+          e.preventDefault()
+          navigate(searchAppPath(value.trim()))
         }}
-        placeholder='Search docs…'
-        aria-label='Search docs'
-        className='h-7 pl-7 text-xs'
-      />
-    </form>
+        className='relative w-64'
+      >
+        <Search className='pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground' />
+        <Input
+          type='text'
+          value={value}
+          onChange={(e: ChangeEvent<HTMLInputElement>) => setValue(e.target.value)}
+          onKeyDown={(e: KeyboardEvent) => {
+            if (e.key === 'Escape') {
+              setValue('')
+            }
+          }}
+          placeholder='Search docs…'
+          aria-label='Search docs'
+          className='h-7 pl-7 text-xs'
+        />
+      </form>
+    </search>
   )
 }
 
@@ -97,16 +99,16 @@ export function DocsTitleBar({
             title='Search'
             className={buttonVariants({ variant: 'ghost', size: 'icon' })}
           >
-            <icons.Search />
+            <Search />
           </AppLink>
         </span>
         <Button variant='ghost' size='sm' onClick={onNew} aria-label='New document' title='New document'>
-          <icons.Plus />
+          <Plus />
           <span className='hidden @3xl/title-bar:inline'>New document</span>
         </Button>
         {onOpenOutline ? (
           <Button variant='ghost' size='icon' onClick={onOpenOutline} aria-label='On this page' title='On this page'>
-            <icons.TableOfContents />
+            <TableOfContents />
           </Button>
         ) : null}
       </AppActions>

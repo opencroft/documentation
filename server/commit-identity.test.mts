@@ -25,7 +25,17 @@ async function commitIn(author: string): Promise<{ author: string; committer: st
     await git('init', '--quiet')
     await writeFile(join(dir, 'page.md'), 'One\n')
     await git('add', 'page.md')
-    await git('-c', 'commit.gpgsign=false', '-c', 'user.useConfigOnly=true', ...commitAs(author), 'commit', '--quiet', '-m', 'Publish')
+    await git(
+      '-c',
+      'commit.gpgsign=false',
+      '-c',
+      'user.useConfigOnly=true',
+      ...commitAs(author),
+      'commit',
+      '--quiet',
+      '-m',
+      'Publish',
+    )
     const { stdout } = await git('log', '-1', '--format=%an <%ae>%n%cn <%ce>')
     const [authorLine, committerLine] = stdout.trim().split('\n')
     return { author: authorLine, committer: committerLine }
@@ -34,14 +44,23 @@ async function commitIn(author: string): Promise<{ author: string; committer: st
   }
 }
 
-test('a published page is committed under the caller\'s name, with no email', { skip: !hasGit && 'git is not installed' }, async () => {
+test("a published page is committed under the caller's name, with no email", {
+  skip: !hasGit && 'git is not installed',
+}, async () => {
   assert.deepEqual(await commitIn('Alice Example'), { author: 'Alice Example <>', committer: 'Alice Example <>' })
 })
 
-test('a caller with no usable name is committed as the unnamed author', { skip: !hasGit && 'git is not installed' }, async () => {
+test('a caller with no usable name is committed as the unnamed author', {
+  skip: !hasGit && 'git is not installed',
+}, async () => {
   assert.deepEqual(await commitIn('  '), { author: `${UNNAMED_AUTHOR} <>`, committer: `${UNNAMED_AUTHOR} <>` })
 })
 
 test('angle brackets and line breaks cannot break the ident line', () => {
-  assert.deepEqual(commitAs('agent-a <x@example.com>\nsecond'), ['-c', 'user.name=agent-a x@example.com second', '-c', 'user.email='])
+  assert.deepEqual(commitAs('agent-a <x@example.com>\nsecond'), [
+    '-c',
+    'user.name=agent-a x@example.com second',
+    '-c',
+    'user.email=',
+  ])
 })

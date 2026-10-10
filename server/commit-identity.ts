@@ -12,6 +12,10 @@ export const UNNAMED_AUTHOR = 'OpenCroft'
  */
 export function commitAs(author: string): string[] {
   // `<`, `>` and line breaks would corrupt the ident line git writes.
-  const name = author.replace(/[<>\r\n]/g, ' ').replace(/\s+/g, ' ').trim() || UNNAMED_AUTHOR
+  const name =
+    author
+      .replace(/[<>\r\n]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim() || UNNAMED_AUTHOR
   return ['-c', `user.name=${name}`, '-c', 'user.email=']
 }

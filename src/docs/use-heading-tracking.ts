@@ -1,7 +1,4 @@
-import { legacy } from '@opencroft/client'
-
-const { React } = legacy
-const { useCallback, useEffect, useRef } = React
+import { useCallback, useEffect, useRef } from 'react'
 
 const SCROLL_DURATION = 250
 const SCROLL_OFFSET = 80
@@ -192,6 +189,7 @@ export function useHeadingTracking({
   // Once per page and heading: the same page rendering again (a publish, a
   // version from its history) leaves the reader where they are.
   const scrolledToRef = useRef<string | null>(null)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: selectedPath is not read; opening another page is what clears the heading already scrolled to
   useEffect(() => {
     scrolledToRef.current = null
   }, [selectedPath])

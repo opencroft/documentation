@@ -1,14 +1,7 @@
-import host from '@opencroft/server'
+import { collab } from '@opencroft/server/collab'
+import { fs, path } from '@opencroft/server/system'
 
-import {
-  docsDeleteFile,
-  docsDiscardFile,
-  docsPublishFile,
-  docsPull,
-  docsShow,
-  getDocsRoot,
-  gitAdd,
-} from './docs-git'
+import { docsDeleteFile, docsDiscardFile, docsPublishFile, docsPull, docsShow, getDocsRoot, gitAdd } from './docs-git'
 
 // A page's draft -- its file in the instance's working tree -- is one shared
 // document: everyone editing the page edits the same draft at once, an
@@ -43,8 +36,8 @@ async function draftFile(nodeId: string, filePath: string): Promise<{ root: stri
   if (!root) {
     throw new Error(`No documentation repository configured for instance "${nodeId}"`)
   }
-  const resolved = host.path.resolve(root, filePath)
-  if (!resolved.startsWith(root + host.path.sep)) {
+  const resolved = path.resolve(root, filePath)
+  if (!resolved.startsWith(root + path.sep)) {
     throw new Error('Access denied')
   }
   return { root, resolved }
@@ -54,7 +47,7 @@ async function draftFile(nodeId: string, filePath: string): Promise<{ root: stri
 async function readStored(nodeId: string, filePath: string): Promise<string | null> {
   const { resolved } = await draftFile(nodeId, filePath)
   try {
-    return await host.fs.readFile(resolved, 'utf-8')
+    return await fs.readFile(resolved, 'utf-8')
   } catch {
     try {
       return await docsShow(nodeId, filePath)
@@ -66,7 +59,7 @@ async function readStored(nodeId: string, filePath: string): Promise<string | nu
 
 /** Serves the pages' drafts to the host's shared editor. Called once, from the extension's `load`. */
 export function registerDocDrafts(): void {
-  host.collab.markdown.register(KIND, {
+  collab.markdown.register(KIND, {
     read: async (key) => {
       const { nodeId, filePath } = pageOf(key)
       return readStored(nodeId, filePath)
@@ -79,8 +72,8 @@ export function registerDocDrafts(): void {
         return
       }
       const { root, resolved } = await draftFile(nodeId, filePath)
-      await host.fs.mkdir(host.path.dirname(resolved), { recursive: true })
-      await host.fs.writeFile(resolved, markdown, 'utf-8')
+      await fs.mkdir(path.dirname(resolved), { recursive: true })
+      await fs.writeFile(resolved, markdown, 'utf-8')
       await gitAdd(root, filePath)
     },
     // Anyone signed in may open a page's draft, as anyone signed in can
@@ -102,13 +95,13 @@ export function registerDocDrafts(): void {
 /** What the page's editor opens: the shared draft's document name. */
 export async function draftDocumentName(nodeId: string, filePath: string): Promise<string> {
   await draftFile(nodeId, filePath)
-  return host.collab.markdown.documentName(KIND, keyOf(nodeId, filePath))
+  return collab.markdown.documentName(KIND, keyOf(nodeId, filePath))
 }
 
 /** The page's draft as it stands, open copy included; null when the page has none. */
 export async function readDraft(nodeId: string, filePath: string): Promise<string | null> {
   await draftFile(nodeId, filePath)
-  return host.collab.markdown.read(KIND, keyOf(nodeId, filePath))
+  return collab.markdown.read(KIND, keyOf(nodeId, filePath))
 }
 
 /** Who changed a draft from outside its editor, as the people editing it are shown. */
@@ -133,21 +126,21 @@ export async function editDraft(
   if ((await readDraft(nodeId, filePath)) === null) {
     // Nobody can have a page open that does not exist yet; created with its
     // drafts closed in case someone opens it meanwhile.
-    return host.collab.markdown.whileClosed(KIND, [key], async () => {
+    return collab.markdown.whileClosed(KIND, [key], async () => {
       const { root, resolved } = await draftFile(nodeId, filePath)
       const created = change('')
-      await host.fs.mkdir(host.path.dirname(resolved), { recursive: true })
-      await host.fs.writeFile(resolved, created, 'utf-8')
+      await fs.mkdir(path.dirname(resolved), { recursive: true })
+      await fs.writeFile(resolved, created, 'utf-8')
       await gitAdd(root, filePath)
       return created
     })
   }
-  return host.collab.markdown.edit(KIND, key, by, change)
+  return collab.markdown.edit(KIND, key, by, change)
 }
 
 /** Writes the page's open draft to its file now, so what is published is everything typed so far. */
 export async function flushDraft(nodeId: string, filePath: string): Promise<void> {
-  await host.collab.markdown.flush(KIND, keyOf(nodeId, filePath))
+  await collab.markdown.flush(KIND, keyOf(nodeId, filePath))
 }
 
 // ─── Changes to the files under the drafts ─────────────────────────────
@@ -166,13 +159,15 @@ export async function publishPage(
 /** Drops the page's draft, for everyone editing it: their editors reopen on the published page. */
 export function discardPage(nodeId: string, filePath: string): Promise<void> {
   const key = keyOf(nodeId, filePath)
-  return host.collab.markdown.whileClosed(KIND, [key], () => docsDiscardFile(nodeId, filePath), { discard: true })
+  return collab.markdown.whileClosed(KIND, [key], () => docsDiscardFile(nodeId, filePath), { discard: true })
 }
 
 /** Deletes the page, as a commit by `by`, its draft dropped for everyone editing it. */
 export function deletePage(nodeId: string, filePath: string, by: DraftEditor): Promise<void> {
   const key = keyOf(nodeId, filePath)
-  return host.collab.markdown.whileClosed(KIND, [key], () => docsDeleteFile(nodeId, filePath, by.name), { discard: true })
+  return collab.markdown.whileClosed(KIND, [key], () => docsDeleteFile(nodeId, filePath, by.name), {
+    discard: true,
+  })
 }
 
 /**
@@ -181,5 +176,5 @@ export function deletePage(nodeId: string, filePath: string, by: DraftEditor): P
  * instance: each is stored first, and editors reconnect a moment later.
  */
 export function pullDocs(nodeId: string): Promise<void> {
-  return host.collab.markdown.whileClosed(KIND, null, () => docsPull(nodeId))
+  return collab.markdown.whileClosed(KIND, null, () => docsPull(nodeId))
 }

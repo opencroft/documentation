@@ -1,40 +1,33 @@
-/** A run of a line: the words searched for, or what lies between them. */
+/** A run of a line: what the search matched, or what lies between. `start` is its offset in the line. */
 export interface HighlightSegment {
   text: string
   match: boolean
-}
-
-function escapeRegExp(text: string): string {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  start: number
 }
 
 /**
- * `text` cut into the runs that match `query` and the runs between them, so a
- * result line can mark what was searched for.
- *
- * The match is the search's own: plain text, not a pattern, and case
- * insensitive (the server searches with a fixed-string, ignore-case grep). A
- * query with a `.` or `(` in it must match those characters and nothing else,
- * which is why it is escaped rather than handed to a regular expression raw.
- * The segments always join back into `text`.
+ * `text` cut at the spans the search reported as matched (`[start, end)`
+ * offsets, ascending and not overlapping), so a result line can mark them.
+ * Spans outside the line are clipped. The segments always join back into
+ * `text`.
  */
-export function highlightSegments(text: string, query: string): HighlightSegment[] {
-  const needle = query.trim()
-  if (!needle) {
-    return [{ text, match: false }]
-  }
+export function highlightSegments(text: string, ranges: Array<[number, number]>): HighlightSegment[] {
   const segments: HighlightSegment[] = []
   let last = 0
-  for (const m of text.matchAll(new RegExp(escapeRegExp(needle), 'giu'))) {
-    const at = m.index ?? 0
-    if (at > last) {
-      segments.push({ text: text.slice(last, at), match: false })
+  for (const [from, to] of ranges) {
+    const start = Math.max(from, last)
+    const end = Math.min(to, text.length)
+    if (end <= start) {
+      continue
     }
-    segments.push({ text: m[0], match: true })
-    last = at + m[0].length
+    if (start > last) {
+      segments.push({ text: text.slice(last, start), match: false, start: last })
+    }
+    segments.push({ text: text.slice(start, end), match: true, start })
+    last = end
   }
-  if (last < text.length) {
-    segments.push({ text: text.slice(last), match: false })
+  if (last < text.length || segments.length === 0) {
+    segments.push({ text: text.slice(last), match: false, start: last })
   }
-  return segments.length > 0 ? segments : [{ text, match: false }]
+  return segments
 }

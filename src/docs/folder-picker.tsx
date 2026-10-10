@@ -1,10 +1,10 @@
-import { legacy } from '@opencroft/client'
-
+import { Button, Input, Label } from '@opencroft/client/ui'
 import { cn } from 'cn'
-import { ancestorsOf, type FolderNode } from './new-doc'
+import { Check, ChevronDown, Folder, FolderOpen, FolderPlus, House } from 'lucide-react'
+import type { ChangeEvent, KeyboardEvent } from 'react'
+import { useState } from 'react'
 
-const { icons, React, Button, Input, Label } = legacy
-const { useState } = React
+import { ancestorsOf, type FolderNode } from './new-doc'
 
 interface FolderPickerProps {
   folders: FolderNode[]
@@ -69,7 +69,7 @@ export function FolderPicker({ folders, selected, onSelect, folderNameError, onA
     <li>
       <div className={ROW} style={indent(depth)}>
         <span className='w-6 shrink-0' />
-        <icons.FolderPlus className='size-4 shrink-0 text-muted-foreground' />
+        <FolderPlus className='size-4 shrink-0 text-muted-foreground' />
         <Input
           autoFocus
           aria-label='New folder name'
@@ -77,8 +77,8 @@ export function FolderPicker({ folders, selected, onSelect, folderNameError, onA
           value={draftName}
           placeholder='Folder name'
           className='h-8 min-w-0 flex-1'
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) => setDraftName(e.target.value)}
-          onKeyDown={(e: React.KeyboardEvent) => {
+          onChange={(e: ChangeEvent<HTMLInputElement>) => setDraftName(e.target.value)}
+          onKeyDown={(e: KeyboardEvent) => {
             if (e.key === 'Enter') {
               e.preventDefault()
               addFolder()
@@ -97,7 +97,7 @@ export function FolderPicker({ folders, selected, onSelect, folderNameError, onA
           disabled={nameError !== null}
           aria-label='Add folder'
         >
-          <icons.Check />
+          <Check />
         </Button>
       </div>
       {nameError && (
@@ -115,10 +115,13 @@ export function FolderPicker({ folders, selected, onSelect, folderNameError, onA
     const hasChildren = node.children.length > 0
     // The root is always open; a folder getting a new child opens to show where it goes.
     const isOpen = isRoot || namingHere || expanded.has(node.path)
-    const Icon = isRoot ? icons.House : isOpen && hasChildren ? icons.FolderOpen : icons.Folder
+    const Icon = isRoot ? House : isOpen && hasChildren ? FolderOpen : Folder
     return (
       <li key={node.path}>
-        <div className={cn(ROW, isSelected ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50')} style={indent(depth)}>
+        <div
+          className={cn(ROW, isSelected ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50')}
+          style={indent(depth)}
+        >
           {hasChildren && !isRoot ? (
             <button
               type='button'
@@ -127,7 +130,7 @@ export function FolderPicker({ folders, selected, onSelect, folderNameError, onA
               aria-expanded={isOpen}
               className='inline-flex size-6 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:text-foreground'
             >
-              <icons.ChevronDown className={cn('size-3.5 transition-transform', !isOpen && '-rotate-90')} />
+              <ChevronDown className={cn('size-3.5 transition-transform', !isOpen && '-rotate-90')} />
             </button>
           ) : (
             <span className='w-6 shrink-0' />
@@ -160,7 +163,7 @@ export function FolderPicker({ folders, selected, onSelect, folderNameError, onA
       <div className='flex items-center justify-between gap-2'>
         <Label>Folder</Label>
         <Button type='button' variant='ghost' size='sm' onClick={startNaming}>
-          <icons.FolderPlus /> New folder
+          <FolderPlus /> New folder
         </Button>
       </div>
       <ul className='m-0 max-h-56 list-none overflow-y-auto rounded-md border p-1'>

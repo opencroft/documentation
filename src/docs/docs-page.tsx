@@ -1,12 +1,22 @@
+import { callAppAction, invoke } from '@opencroft/client/actions'
+import { AppLink, AppSidebar, useAppLocation, useAppNavigate } from '@opencroft/client/app'
+import {
+  Button,
+  ScrollArea,
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from '@opencroft/client/ui'
+import { ArrowLeft, FileText, Pencil } from 'lucide-react'
 import type { ReactNode } from 'react'
-import { AppLink, AppSidebar, callAppAction, legacy, useAppLocation, useAppNavigate } from '@opencroft/client'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { Alert, AlertTitle } from '@/components/ui/alert'
 import { DocPageBar } from '@/components/ui/documentation/doc-page-bar'
 import { LogoLoader } from '@/components/ui/logo-loader'
-
 import { DeleteDocDialog } from './doc-dialogs'
-import { DocCommentsOverlay } from './doc-comments'
 import { DocDiff } from './doc-diff'
 import { DocEditor } from './doc-editor'
 import { defaultDoc, docAppPath, docEditAppPath, folderPage, routeOf } from './doc-routes'
@@ -20,10 +30,6 @@ import { SearchPage } from './search-page'
 import type { DocEntry, LogEntry } from './types'
 import { useElementWidth } from './use-element-width'
 import { useHeadingTracking } from './use-heading-tracking'
-
-const { icons, invoke, React, Button, ScrollArea, Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } =
-  legacy
-const { useCallback, useEffect, useMemo, useRef, useState } = React
 
 const NOT_RENDERED = { path: null, html: '' }
 
@@ -152,14 +158,15 @@ export function DocsBrowser({ instanceId, namespace, defaultFile, onSourceChange
       return
     }
     const parts = selectedPath.split('/')
-    const next = new Set(expandedPaths)
-    let cur = ''
-    for (let i = 0; i < parts.length - 1; i++) {
-      cur = cur ? `${cur}/${parts[i]}` : parts[i]
-      next.add(cur)
-    }
-    setExpandedPaths(next)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    setExpandedPaths((expanded) => {
+      const next = new Set(expanded)
+      let cur = ''
+      for (let i = 0; i < parts.length - 1; i++) {
+        cur = cur ? `${cur}/${parts[i]}` : parts[i]
+        next.add(cur)
+      }
+      return next
+    })
   }, [selectedPath])
 
   // ── The bare address is replaced by the default page's ────────────────────
@@ -403,7 +410,7 @@ export function DocsBrowser({ instanceId, namespace, defaultFile, onSourceChange
   // Back from the editor or a version from the history: the page as it reads.
   const backButton = (onClick: () => void) => (
     <Button size='sm' variant='ghost' onClick={onClick}>
-      <icons.ArrowLeft /> Back
+      <ArrowLeft /> Back
     </Button>
   )
 
@@ -445,7 +452,7 @@ export function DocsBrowser({ instanceId, namespace, defaultFile, onSourceChange
               Only a draft of it exists. Readers see it once it has been published.
             </p>
             <Button size='sm' onClick={handleStartEdit}>
-              <icons.Pencil /> Edit draft
+              <Pencil /> Edit draft
             </Button>
           </div>
         )}
@@ -464,20 +471,15 @@ export function DocsBrowser({ instanceId, namespace, defaultFile, onSourceChange
           <>
             {pathBar(
               <Button size='sm' variant='ghost' onClick={handleStartEdit}>
-                <icons.Pencil /> Edit
+                <Pencil /> Edit
               </Button>,
             )}
-            <div className='relative'>
-              <MarkdownContent
-                content={docContent}
-                currentPath={selectedPath}
-                onHeadingClick={handleHeadingClick}
-                onRendered={setRenderedHtml}
-              />
-              {selectedPath && (
-                <DocCommentsOverlay namespace={namespace} docPath={selectedPath} renderKey={renderedHtml} />
-              )}
-            </div>
+            <MarkdownContent
+              content={docContent}
+              currentPath={selectedPath}
+              onHeadingClick={handleHeadingClick}
+              onRendered={setRenderedHtml}
+            />
           </>
         )}
         {/* The bare address is on its way to the default page until the tree
@@ -487,7 +489,7 @@ export function DocsBrowser({ instanceId, namespace, defaultFile, onSourceChange
         )}
         {!selectedPath && !loading && !error && tree !== null && !homeDoc && (
           <div className='flex flex-col items-center justify-center py-20 gap-2 text-muted-foreground'>
-            <icons.FileText className='size-10' />
+            <FileText className='size-10' />
             <p className='text-sm'>Select a file from the sidebar</p>
           </div>
         )}

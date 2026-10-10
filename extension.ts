@@ -1,7 +1,4 @@
-import type * as opencroft from '@opencroft/server'
-
-import { type Anchor, type Comment, appendComment, broadcastCommentsUpdated, createComment, readComments } from './server/docs-comments'
-import { type DocEntry, createFile, listFiles } from './server/docs-files'
+import { docsApps } from './server/docs-app'
 import {
   type DraftEditor,
   discardPage,
@@ -11,6 +8,7 @@ import {
   readDraft,
   registerDocDrafts,
 } from './server/docs-drafts'
+import { createFile, type DocEntry, listFiles } from './server/docs-files'
 import {
   docsAddFile,
   docsChangedFiles,
@@ -20,14 +18,11 @@ import {
   findDocNodeId,
   listDocNamespaces,
 } from './server/docs-git'
-import { docsApps } from './server/docs-app'
-import { type DocSearchResult, searchDocs } from './server/docs-search'
+import { type DocSearchAnswer, searchDocs } from './server/docs-search'
 
-export function load(context: opencroft.ExtensionContext) {
+export function load() {
   registerDocDrafts()
 }
-
-export function unload(context: opencroft.ExtensionContext) {}
 
 export const apps = docsApps
 
@@ -78,30 +73,13 @@ async function docsDiscardByNs(namespace: string, filePath: string): Promise<voi
   await discardPage(await nodeIdOf(namespace), filePath)
 }
 
-async function docsPostComment(
-  namespace: string,
-  filePath: string,
-  message: string,
-  author?: string,
-  parentId?: string,
-  anchor?: Anchor,
-): Promise<Comment> {
-  const trimmed = message.trim()
-  if (!trimmed) {
-    throw new Error('Comment cannot be empty')
-  }
-  const comment = createComment(author ?? 'user', trimmed, parentId ? undefined : anchor)
-  await appendComment(namespace, filePath, comment, parentId)
-  // Push live refresh to any open doc viewers. Best-effort/no-op on hosts without host.events.
-  broadcastCommentsUpdated(filePath)
-  return comment
-}
-
 export const actions = {
   'docs.pull': (params: { nodeId: string }) => pullDocs(params.nodeId),
   'docs.changedFiles': (params: { nodeId: string }) => docsChangedFiles(params.nodeId),
-  'docs.log': (params: { nodeId: string; filePath?: string; count?: number }) => docsLog(params.nodeId, params.filePath, params.count),
-  'docs.show': (params: { nodeId: string; filePath: string; ref?: string }) => docsShow(params.nodeId, params.filePath, params.ref),
+  'docs.log': (params: { nodeId: string; filePath?: string; count?: number }) =>
+    docsLog(params.nodeId, params.filePath, params.count),
+  'docs.show': (params: { nodeId: string; filePath: string; ref?: string }) =>
+    docsShow(params.nodeId, params.filePath, params.ref),
   'docs.addFile': (params: { nodeId: string; filePath: string }) => docsAddFile(params.nodeId, params.filePath),
   'docs.discardFile': (params: { nodeId: string; filePath: string }) => discardPage(params.nodeId, params.filePath),
   'docs.findActiveDocsRoot': (params?: { namespace?: string }) => findActiveDocsRoot(params?.namespace),
@@ -110,13 +88,9 @@ export const actions = {
 
   // ── Namespace-scoped UI actions ─────────────────────────────────────
   'docs.listFiles': (params: { namespace: string }): Promise<DocEntry[]> => listFiles(params.namespace),
-  'docs.search': (params: {
-    namespace?: string
-    pattern: string
-    maxResults?: number
-    literal?: boolean
-  }): Promise<DocSearchResult[]> =>
-    searchDocs(params.namespace, params.pattern, params.maxResults ?? 50, { literal: params.literal }),
+  // A reader's search: the same ranked search agents run, over one app.
+  'docs.search': (params: { namespace: string; query: string }): Promise<DocSearchAnswer> =>
+    searchDocs([params.namespace], { query: params.query, limit: 50, perPage: 3 }),
   // The page's shared draft, as its editor opens it.
   'docs.openDraft': async (params: { namespace: string; path: string }): Promise<string> =>
     draftDocumentName(await nodeIdOf(params.namespace), params.path),
@@ -140,14 +114,4 @@ export const actions = {
   'docs.changedFilesByNs': (params: { namespace: string }): Promise<string[]> => docsChangedFilesByNs(params.namespace),
   'docs.discardByNs': (params: { namespace: string; path: string }): Promise<void> =>
     docsDiscardByNs(params.namespace, params.path),
-  'docs.listComments': (params: { namespace: string; path: string }): Promise<Comment[]> =>
-    readComments(params.namespace, params.path),
-  'docs.postComment': (params: {
-    namespace: string
-    path: string
-    message: string
-    author?: string
-    parentId?: string
-    anchor?: Anchor
-  }): Promise<Comment> => docsPostComment(params.namespace, params.path, params.message, params.author, params.parentId, params.anchor),
 }

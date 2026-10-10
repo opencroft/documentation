@@ -1,7 +1,4 @@
-import { legacy } from '@opencroft/client'
-
-const { React } = legacy
-const { useLayoutEffect, useState } = React
+import { useLayoutEffect, useState } from 'react'
 
 /**
  * The width of the element `ref` is on, kept current; null until it is first

@@ -1,9 +1,7 @@
-import { legacy } from '@opencroft/client'
+import { defineExtension } from '@opencroft/client/extension'
 
 import { DocsAppForm } from './app-form'
 import { DocsAppView } from './app-view'
-
-const { defineExtension } = legacy
 
 export default defineExtension({
   manifest: {},

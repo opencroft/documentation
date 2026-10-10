@@ -1,5 +1,6 @@
-import type { AppInstanceContext, AppsExport } from '@opencroft/server'
-import host from '@opencroft/server'
+import type { AppInstanceContext, AppsExport } from '@opencroft/server/apps'
+import { secrets } from '@opencroft/server/secrets'
+import { execFile, fs } from '@opencroft/server/system'
 
 import { docsAppActions } from './docs-app-actions'
 
@@ -17,7 +18,7 @@ interface DocsAppParams {
 }
 
 function isCloned(dir: string): Promise<boolean> {
-  return host.fs
+  return fs
     .access(`${dir}/.git`)
     .then(() => true)
     .catch(() => false)
@@ -38,7 +39,7 @@ async function resolveAuthUrl(params: DocsAppParams): Promise<string> {
   }
   const storeId = params.tokenSecret.slice(0, slash)
   const key = params.tokenSecret.slice(slash + 1)
-  const token = await host.secrets.get(storeId, key)
+  const token = await secrets.get(storeId, key)
   if (!token) {
     throw new Error(`Secret ${params.tokenSecret} not found or empty`)
   }
@@ -52,7 +53,7 @@ async function cloneInto(ctx: AppInstanceContext): Promise<void> {
   const params = ctx.params as DocsAppParams
   const authUrl = await resolveAuthUrl(params)
   const branch = params.branch || 'main'
-  await host.execFile('git', [
+  await execFile('git', [
     '-c',
     'safe.directory=*',
     'clone',
@@ -65,7 +66,7 @@ async function cloneInto(ctx: AppInstanceContext): Promise<void> {
   // Never leave the token on disk: the remote keeps the clean URL, and later
   // authenticated operations re-resolve credentials the same way this did.
   if (authUrl !== params.repoUrl) {
-    await host.execFile('git', ['-C', ctx.dataDir, 'remote', 'set-url', 'origin', params.repoUrl as string])
+    await execFile('git', ['-C', ctx.dataDir, 'remote', 'set-url', 'origin', params.repoUrl as string])
   }
 }
 

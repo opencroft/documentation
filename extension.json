@@ -1,7 +1,7 @@
 {
   "id": "opencroft.documentation",
   "name": "Documentation",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Documentation App — clone, browse and edit a docs git repository added to a space.",
   "provides": {
     "apps": [
@@ -11,22 +11,41 @@
         "description": "Browse and edit a documentation repository.",
         "icon": "BookOpen",
         "parameters": [
-          { "id": "repoUrl", "label": "Repository URL", "required": true, "placeholder": "https://example.com/docs.git" },
+          {
+            "id": "repoUrl",
+            "label": "Repository URL",
+            "required": true,
+            "placeholder": "https://example.com/docs.git"
+          },
           { "id": "branch", "label": "Branch", "placeholder": "main" },
-          { "id": "tokenSecret", "label": "Access token", "description": "Secrets Store key holding the git token, as <storeId>/<key>" },
+          {
+            "id": "tokenSecret",
+            "label": "Access token",
+            "description": "Secrets Store key holding the git token, as <storeId>/<key>"
+          },
           { "id": "username", "label": "Git username", "placeholder": "x-access-token" }
         ],
         "actions": [
           {
             "id": "search",
-            "description": "Search the published markdown content of this documentation repository (the branch as pushed to its remote; drafts never match). Returns matching files with line snippets.",
+            "description": "Find the pages that answer a question. Pass `query`: the words you expect on the page, in any order, case-insensitive (\"worktree node_modules install\"); a word also finds its plural and -ing/-ed forms, and \"quoted text\" must appear as written. Pages holding every word come first, ranked so that rare words and words in the title, a heading or the path count most; when no page holds them all, the closest pages are returned, each with the words it lacks. Use 2-4 distinctive words (names, commands, identifiers) rather than a sentence. Pass `pattern` instead for a regular expression (JavaScript syntax with the `u` flag, case-insensitive), e.g. `^## ` to list sections; escape only characters that need it (`\\#` is refused), and a pattern that runs for over a second is stopped. Searches this app by default; `apps: \"*\"` searches every documentation app in one ranked list. Only the published version is searched; drafts never match. The answer is text: each page with its path, title and best matching lines (`L<line>`), then how to `read` from a line.",
             "inputSchema": {
               "type": "object",
               "properties": {
-                "pattern": { "type": "string", "description": "Regex pattern (case-insensitive)." },
-                "maxResults": { "type": "number", "description": "Maximum matches to return (default 50)." }
-              },
-              "required": ["pattern"]
+                "query": {
+                  "type": "string",
+                  "description": "Words to find, in any order; \"quoted text\" as written."
+                },
+                "pattern": {
+                  "type": "string",
+                  "description": "A regular expression instead of query (JavaScript syntax, case-insensitive)."
+                },
+                "apps": {
+                  "description": "Where to search: \"*\" for every documentation app, or a list of app addresses (<space>.<app-slug>). Default: this app.",
+                  "anyOf": [{ "type": "string", "enum": ["*"] }, { "type": "array", "items": { "type": "string" } }]
+                },
+                "limit": { "type": "number", "description": "Pages to return, best first (default 6, at most 100)." }
+              }
             }
           },
           {
@@ -36,7 +55,11 @@
               "type": "object",
               "properties": {
                 "path": { "type": "string", "description": "Relative path within the repository." },
-                "version": { "type": "string", "enum": ["published", "draft"], "description": "Which content to read: \"published\" (default) or \"draft\" (the unpublished draft, including what people are typing into it right now)." },
+                "version": {
+                  "type": "string",
+                  "enum": ["published", "draft"],
+                  "description": "Which content to read: \"published\" (default) or \"draft\" (the unpublished draft, including what people are typing into it right now)."
+                },
                 "offset": { "type": "number", "description": "1-indexed line to start from. Default 1." },
                 "limit": { "type": "number", "description": "Number of lines to return. Default: read to end." }
               },
@@ -67,20 +90,6 @@
                 "content": { "type": "string", "description": "Full file content (UTF-8)." }
               },
               "required": ["path", "content"]
-            }
-          },
-          {
-            "id": "reply",
-            "description": "Post a reply to a comment thread anchored on a doc. Use when responding to a user comment the agent was mentioned in.",
-            "inputSchema": {
-              "type": "object",
-              "properties": {
-                "docPath": { "type": "string", "description": "Relative path of the doc the comment is anchored to." },
-                "commentId": { "type": "string", "description": "The id of the comment being replied to." },
-                "message": { "type": "string", "description": "Reply text." },
-                "author": { "type": "string", "description": "Author label shown in the thread. Defaults to the calling agent." }
-              },
-              "required": ["docPath", "commentId", "message"]
             }
           },
           {

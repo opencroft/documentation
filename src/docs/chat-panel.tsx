@@ -1,21 +1,11 @@
-import { legacy } from '@opencroft/client'
+import { ChatDock as HostChatDock, SelectionProvider, useSelection } from '@opencroft/client/chat'
+import type { ReactNode } from 'react'
+import { useEffect, useRef } from 'react'
 
-const { React } = legacy
-
-// Taken off the legacy object rather than as named imports: it spreads the
-// whole host and ui surface, while the shims' named-export lists are
-// hand-maintained and predate these symbols. Read defensively so a host
-// without them renders the browser without the chat instead of failing.
-//
 // The chat's whole chrome -- launcher, docking, floating window, mobile
 // cover -- is the host's ChatDock, the same surface the space canvas mounts.
 // The browser contributes only what is its own: the selection bridge and
 // which thread is its default.
-const HostChatDock = legacy?.ChatDock
-const SelectionProvider = legacy?.SelectionProvider
-const useSelection = legacy?.useSelection
-
-const chatDockSupported = Boolean(HostChatDock && SelectionProvider && useSelection)
 
 // Long enough that dragging a highlight does not publish per-pixel, short
 // enough that the badge follows the reader rather than lagging behind them.
@@ -73,13 +63,13 @@ function DocSelectionBridge({
   source: string
 }) {
   const { setSelection } = useSelection()
-  const lastRef = React.useRef('')
+  const lastRef = useRef('')
 
   // Opening a document makes it the context. Keyed on the file alone so it
   // fires when the reader moves to another document and at no other time --
   // re-running it on anything else would overwrite a highlight the reader made
   // in the document they are still in.
-  React.useEffect(() => {
+  useEffect(() => {
     if (!file) {
       return
     }
@@ -101,7 +91,7 @@ function DocSelectionBridge({
   // highlight replaces what is published, and nothing in this panel clears it:
   // moving to another document publishes that one instead, and leaving the
   // browser unmounts the scope and takes the highlight with it.
-  React.useEffect(() => {
+  useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | null = null
 
     const publish = () => {
@@ -118,11 +108,12 @@ function DocSelectionBridge({
       // and the outer bounds taken.
       const from = sourceLinesOf(anchor, containerRef.current)
       const to = sourceLinesOf(selection?.focusNode ?? null, containerRef.current)
+      const ends = [from, to].filter((lines) => lines !== null)
       const span =
-        from || to
+        ends.length > 0
           ? {
-              start: Math.min(from?.start ?? to!.start, to?.start ?? from!.start),
-              end: Math.max(from?.end ?? to!.end, to?.end ?? from!.end),
+              start: Math.min(...ends.map((lines) => lines.start)),
+              end: Math.max(...ends.map((lines) => lines.end)),
             }
           : null
 
@@ -131,7 +122,13 @@ function DocSelectionBridge({
       // fences -- so quoting it back gives the agent something that is neither
       // the document's words nor findable in it. With a line span the source is
       // sliced verbatim; without one the rendered text is all there is.
-      const quoted = span && source ? source.split('\n').slice(span.start - 1, span.end).join('\n') : ''
+      const quoted =
+        span && source
+          ? source
+              .split('\n')
+              .slice(span.start - 1, span.end)
+              .join('\n')
+          : ''
       const body = quoted || text
       const where = span
         ? span.start === span.end
@@ -141,13 +138,9 @@ function DocSelectionBridge({
       const counted = span ? span.end - span.start + 1 : text.split('\n').length
       const next = {
         label: `${file ? fileLabel(file) : namespace}${span ? `:${span.start}` : ''} \u00b7 ${counted} line${counted === 1 ? '' : 's'}`,
-        content: [
-          `Documentation: ${namespace}`,
-          `File: ${file || '(none)'}`,
-          ...(where ? [where] : []),
-          '',
-          body,
-        ].join('\n'),
+        content: [`Documentation: ${namespace}`, `File: ${file || '(none)'}`, ...(where ? [where] : []), '', body].join(
+          '\n',
+        ),
       }
       const key = `${next.label} ${next.content}`
       if (key === lastRef.current) {
@@ -186,22 +179,21 @@ interface ChatDockProps {
   file: string
   /** The open document's raw markdown. */
   source: string
-  children: React.ReactNode
+  children: ReactNode
 }
 
 /**
  * The docs browser, with the host's shared chat surface around it.
  *
  * The whole surface is ONE selection scope: leaving the browser unmounts the
- * provider and the highlight goes with it. Falls back to rendering `children`
- * alone on a host without the chat, so this is safe to mount unconditionally
- * -- and without a repository open there is nothing to scope a conversation
- * to, so no chat is offered until one is.
+ * provider and the highlight goes with it. Without a repository open there is
+ * nothing to scope a conversation to, so `children` render alone and no chat
+ * is offered until one is.
  */
 export function ChatDock({ space, threadId, namespace, file, source, children }: ChatDockProps) {
-  const bodyRef = React.useRef<HTMLDivElement | null>(null)
+  const bodyRef = useRef<HTMLDivElement | null>(null)
 
-  if (!chatDockSupported || !space) {
+  if (!space) {
     return <>{children}</>
   }
 
