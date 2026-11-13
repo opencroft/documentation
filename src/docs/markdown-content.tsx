@@ -9,6 +9,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 
 import { docLinkTo } from './doc-routes'
+import { fencedCode } from './fenced-code'
 import { rehypeHeadingIds } from './heading-ids'
 import type { TocItem } from './types'
 
@@ -56,47 +57,12 @@ export function extractToc(html: string): TocItem[] {
 }
 
 /**
- * The code inside a fenced block, read from the markdown tree rather than from
- * the rendered children.
- *
- * `pre` is overridden rather than `code` because `code` is also every inline
- * span, and a fence with no language is indistinguishable from inline code by
- * its props alone. The tree says plainly which is which, and it carries the
- * text unescaped, which is what a code block and a copy button both need.
- *
- * Anything that is not exactly one `code` element of plain text — a `pre` a
- * plugin built, a fence something else has already decorated — is not ours to
- * claim, and the caller renders it as it always did.
- */
-function fencedCode(node: ExtraProps['node']): { code: string; language?: string } | null {
-  const only = node?.children?.length === 1 ? node.children[0] : undefined
-  if (only?.type !== 'element' || only.tagName !== 'code') {
-    return null
-  }
-  let text = ''
-  for (const part of only.children) {
-    if (part.type !== 'text') {
-      return null
-    }
-    text += part.value
-  }
-  const classes = only.properties?.className
-  const language = Array.isArray(classes)
-    ? classes
-        .map(String)
-        .find((name) => name.startsWith('language-'))
-        ?.slice('language-'.length)
-    : undefined
-  // Markdown always ends a fence's content with a newline. Keeping it would add
-  // an empty last line to every block, and put one on the clipboard too.
-  return { code: text.replace(/\n$/, ''), language }
-}
-
-/**
  * A fenced block, drawn by the components the host shares with every extension:
  * a `mermaid` fence as the picture somebody wrote in text, everything else as
- * highlighted code with a copy control. Both come from the host's client modules so
- * that shiki and mermaid stay one copy on the page.
+ * highlighted code with its wrap, download and copy controls. Both come from
+ * the host's client modules so that shiki and mermaid stay one copy on the
+ * page. The block gets the fence's whole info string, so a `title=` in it
+ * names the download.
  *
  * The replacement is WRAPPED, and the wrapper carries the source lines by hand.
  * rehypeSourceLines (above) stamps every element with
@@ -114,8 +80,8 @@ function fencedCode(node: ExtraProps['node']): { code: string; language?: string
  *
  * On the box around it: `CodeBlock` draws its own frame, with the fence's
  * language over the code, and takes the prose's code-block spacing; the
- * code inside keeps a long line scrolling sideways instead of wrapping, which
- * keeps the indentation the reader is following. The editor draws its code
+ * code inside keeps a long line scrolling sideways until the reader turns
+ * wrapping on, which keeps the indentation they are following. The editor draws its code
  * blocks in the same frame, so no rule is added here.
  *
  * The wrapper passes the block's margins through (`overflow-visible`). The
@@ -146,7 +112,7 @@ function MarkdownPre({ node, children, ...props }: ComponentProps<'pre'> & Extra
       {fence.language === 'mermaid' ? (
         <MermaidDiagram chart={fence.code} />
       ) : (
-        <CodeBlock code={fence.code} language={fence.language} />
+        <CodeBlock code={fence.code} language={fence.info} />
       )}
     </div>
   )

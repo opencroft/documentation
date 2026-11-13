@@ -1,7 +1,9 @@
 // Shared types for the documentation browser UI, kept local to the extension
 // since the host's server types are not available here.
 
+export type { UnrewrittenLink } from '../../server/doc-links'
 export type { DocEntry } from '../../server/doc-tree'
+export type { PublishResult, TreeChangeResult as TreeChangeAnswer } from '../../server/docs-drafts'
 
 export interface TocItem {
   id: string

@@ -3,6 +3,7 @@ import { secrets } from '@opencroft/server/secrets'
 import { execFile, fs } from '@opencroft/server/system'
 
 import { docsAppActions } from './docs-app-actions'
+import { dropInstanceDrafts, serveInstanceDrafts } from './docs-drafts'
 
 // The Documentation App: each instance is one docs repository, cloned into
 // the instance's private data directory (created by the host before onAdded,
@@ -73,6 +74,7 @@ async function cloneInto(ctx: AppInstanceContext): Promise<void> {
 export const docsApps: AppsExport = {
   documentation: {
     async onAdded(ctx) {
+      serveInstanceDrafts(ctx.instanceId)
       await cloneInto(ctx)
     },
     // Self-healing: an instance whose clone is missing (never finished, or
@@ -87,6 +89,7 @@ export const docsApps: AppsExport = {
       console.log(`[documentation] app instance unloaded: ${ctx.instanceId}`)
     },
     async onRemoved(ctx) {
+      await dropInstanceDrafts(ctx.instanceId)
       console.log(`[documentation] app instance removed: ${ctx.instanceId}`)
     },
     actions: docsAppActions,

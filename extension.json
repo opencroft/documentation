@@ -1,7 +1,7 @@
 {
   "id": "opencroft.documentation",
   "name": "Documentation",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Documentation App — clone, browse and edit a docs git repository added to a space.",
   "provides": {
     "apps": [
@@ -94,14 +94,48 @@
           },
           {
             "id": "publish",
-            "description": "Commit and push a single file. Other staged changes are not pulled into the commit.",
+            "description": "Commit and push a page's draft. Other pages' drafts are not pulled into the commit. The page must start with its title, a level-1 heading (`# Title`), and is saved in the file named after that title (`index.md` and `README.md` keep their names): when the title changed, the file is moved in the same commit and every relative link to it is rewritten. Refused when the title is missing or empty, or another page or folder beside it has that name. The answer's `path` is where the page is now (`previousPath` when it moved); `unrewrittenLinks` lists what was left as written: links that could not be rewritten, and mentions of the old path in text, code or full addresses.",
             "inputSchema": {
               "type": "object",
               "properties": {
-                "path": { "type": "string", "description": "Relative path of the file to commit." },
+                "path": { "type": "string", "description": "Relative path of the page to publish." },
                 "message": { "type": "string", "description": "Git commit message." }
               },
               "required": ["path", "message"]
+            }
+          },
+          {
+            "id": "move",
+            "description": "Move a page or a folder into another folder, or to another place in its own folder, committed and pushed at once. Its drafts move along and stay drafts; every relative link to and from what moves is rewritten, in published pages and drafts. The folders' meta files (`_meta.json`) keep the new order. Refused when the target folder already has a page or folder of that name, or a folder would go into itself. The answer's `path` is where it is now; `unrewrittenLinks` lists what was left as written: links that could not be rewritten, and mentions of the old path in text, code or full addresses.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "description": "Relative path of the page (`guides/intro.md`) or folder (`guides`) to move."
+                },
+                "toFolder": {
+                  "type": "string",
+                  "description": "The folder to move it into; \"\" (default) is the top level."
+                },
+                "position": {
+                  "type": "number",
+                  "description": "Its place among the entries already in that folder, 0 first. Default: last."
+                }
+              },
+              "required": ["path"]
+            }
+          },
+          {
+            "id": "setFolderTitle",
+            "description": "Give a folder a title, kept in its meta file (`_meta.json`), and name the folder after it: the folder is renamed to the title's slug, committed and pushed at once, with every relative link into it rewritten. Refused when the title is empty, has no letters or digits, or another page or folder beside it has that name.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "path": { "type": "string", "description": "Relative path of the folder." },
+                "title": { "type": "string", "description": "The folder's title." }
+              },
+              "required": ["path", "title"]
             }
           },
           {

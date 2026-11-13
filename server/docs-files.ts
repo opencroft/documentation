@@ -1,7 +1,8 @@
 import { fs, path } from '@opencroft/server/system'
 
 import { buildDocTree, type DocEntry } from './doc-tree'
-import { docsPublishedFiles, findDocNodeId, getDocsRoot } from './docs-git'
+import { docsFolderMetas, docsPublishedFiles, docsPublishedTitles, findDocNodeId, getDocsRoot } from './docs-git'
+import { pageTitle } from './page-title'
 
 export type { DocEntry }
 
@@ -124,10 +125,29 @@ async function workingMarkdownFiles(root: string, dirPath = ''): Promise<string[
   return paths
 }
 
-/** The doc tree readers browse: every published page, plus drafts that exist only in the working tree. */
+/**
+ * The doc tree readers browse: every published page, plus drafts that exist
+ * only in the working tree. A published page carries its published title, a
+ * draft-only page its draft's.
+ */
 export async function listFiles(namespace: string): Promise<DocEntry[]> {
   const root = await resolveNamespaceRoot(namespace)
   const nodeId = await findDocNodeId(namespace)
-  const [published, working] = await Promise.all([nodeId ? docsPublishedFiles(nodeId) : [], workingMarkdownFiles(root)])
-  return buildDocTree(published, working)
+  if (!nodeId) {
+    return buildDocTree([], await workingMarkdownFiles(root))
+  }
+  const [published, working, titles, metas] = await Promise.all([
+    docsPublishedFiles(nodeId),
+    workingMarkdownFiles(root),
+    docsPublishedTitles(nodeId),
+    docsFolderMetas(nodeId),
+  ])
+  const publishedSet = new Set(published)
+  for (const draft of working.filter((file) => !publishedSet.has(file))) {
+    const title = pageTitle(await fs.readFile(path.resolve(root, draft), 'utf-8').catch(() => ''))
+    if (title) {
+      titles.set(draft, title)
+    }
+  }
+  return buildDocTree(published, working, { titles, metas })
 }

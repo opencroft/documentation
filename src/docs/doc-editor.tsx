@@ -6,6 +6,7 @@ import { createPortal } from 'react-dom'
 
 import { DocDraftActions, type DocDraftPending } from '@/components/ui/documentation/doc-draft-actions'
 import { DocDiff } from './doc-diff'
+import type { PublishResult } from './types'
 
 interface DocEditorProps {
   /** The App instance; publishing runs as its action, as the signed-in person. */
@@ -14,7 +15,8 @@ interface DocEditorProps {
   filePath: string
   /** The page's shared draft, as `docs.openDraft` names it. */
   document: string
-  onPublish: () => void
+  /** Published: where the page is now (its file is named after its title) and the links left as written. */
+  onPublish: (published: PublishResult) => void
   onDiscard: () => void
   /** Where the draft bar goes: the page area's own row below its scroller. */
   draftBarSlot: HTMLElement | null
@@ -73,18 +75,24 @@ export function DocEditor({
   // Which opening of the changes is current, so a read that lands after Back changes nothing.
   const changesSeq = useRef(0)
 
-  const run = async (act: DocDraftPending, action: () => Promise<unknown>, done: () => void, fallback: string) => {
+  const run = async <T,>(
+    act: DocDraftPending,
+    action: () => Promise<T>,
+    done: (result: T) => void,
+    fallback: string,
+  ) => {
     setPending(act)
     setFailure(null)
+    let result: T
     try {
-      await action()
+      result = await action()
     } catch (e) {
       setFailure(e instanceof Error ? e.message : fallback)
       return
     } finally {
       setPending(null)
     }
-    done()
+    done(result)
   }
 
   const handlePublish = () =>
@@ -92,10 +100,13 @@ export function DocEditor({
       'publish',
       // As an App action, so the commit names the signed-in person.
       () =>
-        callAppAction(instanceId, 'publish', { path: filePath, message: description.trim() || `Update ${filePath}` }),
-      () => {
+        callAppAction<PublishResult>(instanceId, 'publish', {
+          path: filePath,
+          message: description.trim() || `Update ${filePath}`,
+        }),
+      (published) => {
         setDescription('')
-        onPublish()
+        onPublish(published)
       },
       'Publishing failed.',
     )
@@ -134,6 +145,8 @@ export function DocEditor({
     <>
       <MarkdownEditor
         collab={{ document }}
+        // A page's title is its first line, so the editor keeps one there.
+        titleHeading
         // The page scrolls, not the editor: it sits in the docs ScrollArea and
         // grows with the document, which is why the toolbar has to stick and why
         // the box wears no border of its own -- and no inset either: the text

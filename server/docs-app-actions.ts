@@ -1,7 +1,16 @@
 import type { AppActionContext, AppActionHandler } from '@opencroft/server/apps'
 import { path } from '@opencroft/server/system'
 
-import { type DraftEditor, deletePage, editDraft, publishPage, pullDocs, readDraft } from './docs-drafts'
+import {
+  type DraftEditor,
+  deletePage,
+  editDraft,
+  moveInTree,
+  publishPage,
+  pullDocs,
+  readDraft,
+  retitleFolder,
+} from './docs-drafts'
 import { deleteEmptyDirs, resolveDocPath, resolveNamespaceRoot } from './docs-files'
 import { docsShow } from './docs-git'
 import { searchDocs } from './docs-search'
@@ -180,7 +189,37 @@ export const docsAppActions: Record<string, AppActionHandler> = {
       throw new Error('Missing required params: path, message')
     }
     const result = await publishPage(ctx.instanceId, filePath, message, callerOf(ctx))
-    return { instanceId: ctx.instanceId, path: filePath, ...result }
+    return { instanceId: ctx.instanceId, ...result }
+  },
+
+  // Committed and pushed at once, links to and from what moves rewritten.
+  move: async (ctx, args) => {
+    const filePath = args.path as string | undefined
+    if (!filePath) {
+      throw new Error('Missing required param: path')
+    }
+    const position = args.position as number | undefined
+    if (position !== undefined && !Number.isInteger(position)) {
+      throw new Error('position is a whole number: the place among the entries already in the folder, 0 first.')
+    }
+    const result = await moveInTree(
+      ctx.instanceId,
+      filePath,
+      (args.toFolder as string | undefined) ?? '',
+      position,
+      callerOf(ctx),
+    )
+    return { instanceId: ctx.instanceId, ...result }
+  },
+
+  setFolderTitle: async (ctx, args) => {
+    const folder = args.path as string | undefined
+    const title = args.title as string | undefined
+    if (!folder || title === undefined) {
+      throw new Error('Missing required params: path, title')
+    }
+    const result = await retitleFolder(ctx.instanceId, folder, title, callerOf(ctx))
+    return { instanceId: ctx.instanceId, ...result }
   },
 
   // The App's own UI only: deleting a published page is not offered to agents.

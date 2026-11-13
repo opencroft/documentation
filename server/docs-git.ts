@@ -1,10 +1,15 @@
 import { apps, type HostAppInstance } from '@opencroft/server/apps'
 import { secrets as hostSecrets } from '@opencroft/server/secrets'
-import { execFile, fs } from '@opencroft/server/system'
+import { execFile, fs, path } from '@opencroft/server/system'
 
 import { commitAs } from './commit-identity'
+import { type FolderMeta, META_FILE, parseMeta } from './doc-meta'
+import { isListed } from './doc-tree'
+import { titlesAt } from './page-title'
 import { pullKeepingDrafts } from './pull-keeping-drafts'
 import { throttledRefresh, waitAtMost } from './refresh-throttle'
+import { commitTreeChange, type Rename, type TreeChange, type WorkingFiles } from './tree-commit'
+import type { LinkSources, TreeState } from './tree-plan'
 
 // ─── Types ──────────────────────────────────────────────────────────────
 
@@ -277,6 +282,50 @@ export async function docsShow(nodeId: string, filePath: string, ref?: string): 
   return gitExec(repoDir, 'show', `${gitRef}:${filePath}`)
 }
 
+interface PushTarget {
+  repoDir: string
+  data: DocsSourceData
+  secrets: { username?: string; token?: string }
+}
+
+/**
+ * Runs `work` with the clone's remote authenticated for a push, and puts the
+ * plain URL back after it, also when `work` throws. The token is in the
+ * clone's `.git/config` for as long as `work` runs -- for a tree change, the
+ * commit and its push -- and readable there by anything that can read the
+ * clone. A process that dies meanwhile leaves it there until the next push
+ * puts the plain URL back.
+ */
+async function withPushAccess<T>(sourceId: string, work: (target: PushTarget) => Promise<T>): Promise<T> {
+  const repoDir = await docsRepoDir(sourceId)
+  if (!(await isCloned(repoDir))) {
+    throw new Error('Repository is not cloned')
+  }
+  const data = await getSourceData(sourceId)
+  const secrets = await resolveSecrets(data.secretId)
+  const authed = Boolean(data.repoUrl && (secrets.username || secrets.token))
+  if (authed) {
+    await gitExec(repoDir, 'remote', 'set-url', 'origin', buildAuthUrl(data.repoUrl, secrets.username, secrets.token))
+  }
+  try {
+    return await work({ repoDir, data, secrets })
+  } finally {
+    if (authed) {
+      await gitExec(repoDir, 'remote', 'set-url', 'origin', data.repoUrl)
+    }
+  }
+}
+
+/** The push's error for the person who asked, credentials removed. */
+function pushFailure(err: unknown, secrets: { token?: string }, what: string): Error {
+  const message = err instanceof Error ? err.message : String(err)
+  const redacted = secrets.token ? message.split(secrets.token).join('***') : message
+  return new Error(
+    `Could not ${what}: the push to the remote failed, so nothing changed there and the page is as it was. ` +
+      `If the remote has changes this copy lacks, pull, then try again. (${redacted.trim()})`,
+  )
+}
+
 /**
  * Commit and push a single file. Uses `git commit -- <path>` (the
  * --only form) so other staged changes in the index are not pulled
@@ -289,36 +338,204 @@ export async function docsPublishFile(
   message: string,
   author: string,
 ): Promise<{ sha: string; message: string }> {
-  const repoDir = await docsRepoDir(sourceId)
-  const data = await getSourceData(sourceId)
-  const cloned = await isCloned(repoDir)
-  if (!cloned) {
-    throw new Error('Repository is not cloned')
-  }
-
-  const secrets = await resolveSecrets(data.secretId)
-
-  // Auth on the remote only for the push; never leave the token on disk after.
-  const authed = Boolean(data.repoUrl && (secrets.username || secrets.token))
-  if (authed) {
-    const authUrl = buildAuthUrl(data.repoUrl, secrets.username, secrets.token)
-    await gitExec(repoDir, 'remote', 'set-url', 'origin', authUrl)
-  }
-
-  try {
+  return withPushAccess(sourceId, async ({ repoDir, data, secrets }) => {
     await gitExec(repoDir, 'add', '--', filePath)
+    // `diff --quiet` exits 1 when the page differs from the last commit.
+    const unchanged = await gitExec(repoDir, 'diff', '--cached', '--quiet', 'HEAD', '--', filePath).then(
+      () => true,
+      () => false,
+    )
+    if (unchanged) {
+      throw new Error(`Nothing to publish: ${filePath} has no changes.`)
+    }
     await gitExec(repoDir, ...commitAs(author), 'commit', '-m', message, '--', filePath)
     // The page's draft goes back to being a draft when the push fails.
     await pushOrUndo(repoDir, data, secrets, 'publish', async () => {})
-  } finally {
-    if (authed) {
-      await gitExec(repoDir, 'remote', 'set-url', 'origin', data.repoUrl)
+    const sha = (await gitExec(repoDir, 'rev-parse', 'HEAD')).trim()
+    return { sha, message }
+  })
+}
+
+/** The clone's working tree as `commitTreeChange` writes it, empty folders it leaves removed. */
+function workingFilesOf(repoDir: string): WorkingFiles {
+  const at = (relative: string) => {
+    const resolved = path.resolve(repoDir, relative)
+    if (!resolved.startsWith(repoDir + path.sep)) {
+      throw new Error('Access denied')
+    }
+    return resolved
+  }
+  const prune = async (relative: string) => {
+    for (
+      let folder = path.dirname(at(relative));
+      folder.startsWith(repoDir + path.sep);
+      folder = path.dirname(folder)
+    ) {
+      if ((await fs.readdir(folder).catch(() => ['?'])).length > 0) {
+        return
+      }
+      await fs.rmdir(folder)
     }
   }
+  return {
+    read: (relative) => fs.readFile(at(relative), 'utf-8').catch(() => null),
+    write: async (relative, content) => {
+      await fs.mkdir(path.dirname(at(relative)), { recursive: true })
+      await fs.writeFile(at(relative), content, 'utf-8')
+    },
+    remove: async (relative) => {
+      await fs.rm(at(relative), { force: true })
+      await prune(relative)
+    },
+    rename: async (from, to) => {
+      await fs.mkdir(path.dirname(at(to)), { recursive: true })
+      await fs.rename(at(from), at(to))
+      await prune(from)
+    },
+  }
+}
 
-  const sha = (await gitExec(repoDir, 'rev-parse', 'HEAD')).trim()
+/**
+ * Makes a change to the tree as one commit by `author` and pushes it; on a
+ * failed push the clone is as it was. Returns the commit's sha, or null when
+ * nothing published changed.
+ */
+export function docsCommitTree(sourceId: string, change: TreeChange, author: string): Promise<string | null> {
+  return withPushAccess(sourceId, ({ repoDir, data, secrets }) =>
+    commitTreeChange(
+      (...args) => gitExec(repoDir, ...args),
+      workingFilesOf(repoDir),
+      change,
+      commitAs(author),
+      async () => {
+        try {
+          await gitExec(repoDir, 'push', 'origin', data.branch || 'main')
+        } catch (err) {
+          throw pushFailure(err, secrets, 'change the documentation tree')
+        }
+      },
+    ),
+  )
+}
 
-  return { sha, message }
+/** Repository-relative paths of every file in the working tree, dot-folders left out. */
+async function workingFiles(root: string, dirPath = ''): Promise<string[]> {
+  const entries = await fs.readdir(path.resolve(root, dirPath), { withFileTypes: true }).catch(() => null)
+  if (!entries) {
+    return []
+  }
+  const paths: string[] = []
+  for (const entry of entries) {
+    const relative = dirPath ? `${dirPath}/${entry.name}` : entry.name
+    if (entry.isDirectory() && !entry.name.startsWith('.')) {
+      paths.push(...(await workingFiles(root, relative)))
+    } else if (entry.isFile()) {
+      paths.push(relative)
+    }
+  }
+  return paths
+}
+
+/** Each folder's meta, read from the working tree's meta files among `working`. */
+async function readMetas(repoDir: string, working: string[]): Promise<Map<string, FolderMeta>> {
+  const metas = new Map<string, FolderMeta>()
+  for (const file of working) {
+    const base = file.slice(file.lastIndexOf('/') + 1)
+    if (base === META_FILE) {
+      const folder = file.slice(0, Math.max(file.lastIndexOf('/'), 0))
+      metas.set(folder, parseMeta(await fs.readFile(path.resolve(repoDir, file), 'utf-8').catch(() => null)))
+    }
+  }
+  return metas
+}
+
+/** The clone as a tree change is planned on: the last commit, the working tree and the folders' metas. */
+export async function docsTreeState(sourceId: string): Promise<TreeState> {
+  const repoDir = await docsRepoDir(sourceId)
+  const [head, working] = await Promise.all([
+    gitExec(repoDir, 'ls-tree', '-r', '-z', '--name-only', 'HEAD').then((out) => out.split('\0').filter(Boolean)),
+    workingFiles(repoDir),
+  ])
+  return { head, working, metas: await readMetas(repoDir, working) }
+}
+
+/** Each folder's meta, as the tree shows it. */
+export async function docsFolderMetas(sourceId: string): Promise<Map<string, FolderMeta>> {
+  const repoDir = await docsRepoDir(sourceId)
+  return readMetas(repoDir, await workingFiles(repoDir))
+}
+
+/**
+ * The pages a change that moves `renames` reads links from: committed pages
+ * whose text names what moves (by its last path segment, as written or
+ * percent-encoded), and every page whose working text is not the committed
+ * one.
+ */
+export async function docsLinkSources(sourceId: string, renames: Rename[]): Promise<LinkSources> {
+  const repoDir = await docsRepoDir(sourceId)
+  const needles = new Set<string>()
+  for (const { from } of renames) {
+    const base = from.slice(from.lastIndexOf('/') + 1)
+    needles.add(base)
+    needles.add(encodeURIComponent(base))
+  }
+  const candidates =
+    needles.size === 0
+      ? []
+      : await gitExec(
+          repoDir,
+          'grep',
+          '-l',
+          '-z',
+          '-F',
+          ...[...needles].flatMap((n) => ['-e', n]),
+          'HEAD',
+          '--',
+          '*.md',
+        )
+          .then((out) =>
+            out
+              .split('\0')
+              .filter(Boolean)
+              .map((hit) => hit.slice('HEAD:'.length)),
+          )
+          // No page matched: grep exits non-zero.
+          .catch(() => [])
+
+  const drafts = new Map<string, string>()
+  const status = (await gitExec(repoDir, 'status', '--porcelain', '-z', '--untracked-files=all')).split('\0')
+  for (let i = 0; i < status.length; i++) {
+    const entry = status[i]
+    if (!entry) {
+      continue
+    }
+    // A rename or copy is followed by the path it came from.
+    if (entry[0] === 'R' || entry[0] === 'C') {
+      i++
+    }
+    const file = entry.slice(3)
+    if (isListed(file)) {
+      // A page deleted in the working tree has no text to read, and no draft.
+      const text = await fs.readFile(path.resolve(repoDir, file), 'utf-8').catch(() => null)
+      if (text !== null) {
+        drafts.set(file, text)
+      }
+    }
+  }
+  return {
+    readHead: (file) => gitExec(repoDir, 'show', `HEAD:${file}`),
+    candidates,
+    drafts,
+  }
+}
+
+/** Each published page's title. A page that does not start with one is absent. */
+export async function docsPublishedTitles(sourceId: string): Promise<Map<string, string>> {
+  const repoDir = await docsRepoDir(sourceId)
+  if (!(await isCloned(repoDir))) {
+    return new Map()
+  }
+  return titlesAt((...args) => gitExec(repoDir, ...args), await docsPublishedRef(sourceId))
 }
 
 /**
@@ -341,12 +558,7 @@ async function pushOrUndo(
   } catch (err) {
     await gitExec(repoDir, 'reset', '--soft', 'HEAD~1')
     await restore()
-    const message = err instanceof Error ? err.message : String(err)
-    const redacted = secrets.token ? message.split(secrets.token).join('***') : message
-    throw new Error(
-      `Could not ${what}: the push to the remote failed, so nothing changed there and the page is as it was. ` +
-        `If the remote has changes this copy lacks, pull, then try again. (${redacted.trim()})`,
-    )
+    throw pushFailure(err, secrets, what)
   }
 }
 
@@ -391,16 +603,7 @@ export async function docsDeleteFile(nodeId: string, filePath: string, author: s
     return
   }
 
-  const data = await getSourceData(nodeId)
-  const secrets = await resolveSecrets(data.secretId)
-  // Auth on the remote only for the push; never leave the token on disk after.
-  const authed = Boolean(data.repoUrl && (secrets.username || secrets.token))
-  if (authed) {
-    const authUrl = buildAuthUrl(data.repoUrl, secrets.username, secrets.token)
-    await gitExec(repoDir, 'remote', 'set-url', 'origin', authUrl)
-  }
-
-  try {
+  await withPushAccess(nodeId, async ({ data, secrets }) => {
     // `--force` drops a draft of the page along with it; the commit names the
     // page alone, so other pages' staged drafts stay drafts.
     await gitExec(repoDir, 'rm', '--force', '--', filePath)
@@ -409,11 +612,7 @@ export async function docsDeleteFile(nodeId: string, filePath: string, author: s
     await pushOrUndo(repoDir, data, secrets, 'delete the page', () =>
       gitExec(repoDir, 'checkout', 'HEAD', '--', filePath).then(() => {}),
     )
-  } finally {
-    if (authed) {
-      await gitExec(repoDir, 'remote', 'set-url', 'origin', data.repoUrl)
-    }
-  }
+  })
 }
 
 /**

@@ -27,7 +27,9 @@ import { folderOf } from './new-doc'
 import { NewDocDialog } from './new-doc-dialog'
 import { type OutlineTab, PageOutline } from './page-outline'
 import { SearchPage } from './search-page'
-import type { DocEntry, LogEntry } from './types'
+import { type TreeChanged, useTreeEdits } from './tree-edits'
+import { movedPath } from './tree-moves.ts'
+import type { DocEntry, LogEntry, PublishResult } from './types'
 import { useElementWidth } from './use-element-width'
 import { useHeadingTracking } from './use-heading-tracking'
 
@@ -97,8 +99,9 @@ export function DocsBrowser({ instanceId, namespace, defaultFile, onSourceChange
   const [tree, setTree] = useState<DocEntry[] | null>(null)
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set())
   const [docContent, setDocContent] = useState<string | null>(null)
-  // The page exists only as a draft: there is nothing published to read.
-  const [notPublished, setNotPublished] = useState(false)
+  // The page last read that has no published version: it exists only as a
+  // draft, so it opens in its editor.
+  const [draftOnlyPath, setDraftOnlyPath] = useState<string | null>(null)
 
   // Report the raw markdown up as it loads. Kept as an effect on the state
   // rather than fired at each fetch site: the content is set from several
@@ -118,7 +121,8 @@ export function DocsBrowser({ instanceId, namespace, defaultFile, onSourceChange
   const setRenderedHtml = useCallback((html: string) => setRendered({ path: selectedPath, html }), [selectedPath])
   // The shared draft the editor has open: its page and document name.
   const [draft, setDraft] = useState<{ path: string; document: string } | null>(null)
-  const editing = editRequested && draft?.path === selectedPath
+  // Not on an address that names no page.
+  const editing = editRequested && draft?.path === selectedPath && !error
   // Why the page last asked for in its editor opened read-only instead.
   const [editRefused, setEditRefused] = useState<string | null>(null)
   const [createOpen, setCreateOpen] = useState(false)
@@ -185,21 +189,30 @@ export function DocsBrowser({ instanceId, namespace, defaultFile, onSourceChange
       setLoading(true)
       setError(null)
       setDocContent(null)
-      setNotPublished(false)
+      setDraftOnlyPath(null)
       setRendered(NOT_RENDERED)
       setViewing(null)
       setFileLog([])
       try {
         // A reader sees the PUBLISHED page. One that has never been published
-        // has none, and says so rather than showing its draft as if it were.
+        // has none to read, and opens in its editor if it has a draft. An
+        // address with neither names no page.
         const content = await invoke<string | null>('docs.readAtRef', { namespace, path: p })
+        const hasDraft =
+          content === null &&
+          (await invoke<string>('docs.readWorking', { namespace, path: p }).then(
+            () => true,
+            () => false,
+          ))
         if (seq !== loadSeqRef.current) {
           return
         }
-        if (content === null) {
-          setNotPublished(true)
-        } else {
+        if (content !== null) {
           setDocContent(content)
+        } else if (hasDraft) {
+          setDraftOnlyPath(p)
+        } else {
+          setError("This page doesn't exist.")
         }
       } catch {
         if (seq !== loadSeqRef.current) {
@@ -222,6 +235,16 @@ export function DocsBrowser({ instanceId, namespace, defaultFile, onSourceChange
     setEditRefused(null)
     loadDoc(selectedPath)
   }, [selectedPath, loadDoc])
+
+  // A page with no published version has nothing to read: its reading address
+  // is replaced by its editor's. Not when its draft couldn't be opened, which
+  // the reading address says instead.
+  const draftOnly = selectedPath !== null && draftOnlyPath === selectedPath
+  useEffect(() => {
+    if (selectedPath && draftOnly && !editRequested && !editRefused) {
+      navigate(docEditAppPath(selectedPath), { replace: true })
+    }
+  }, [selectedPath, draftOnly, editRequested, editRefused, navigate])
 
   // Display shows the published page; edit mode opens the page's draft, the
   // one everyone editing the page shares, unpublished edits and all. A page
@@ -252,24 +275,61 @@ export function DocsBrowser({ instanceId, namespace, defaultFile, onSourceChange
     }
   }, [selectedPath, navigate])
 
-  // Back from the editor, and where a discarded draft leaves the page. Leaving
-  // keeps the draft: the host has written every change to it already.
+  // Back from the editor, and where a discarded draft leaves a published page.
+  // Leaving keeps the draft: the host has written every change to it already.
   const handleStopEdit = useCallback(() => {
     if (selectedPath) {
       navigate(docAppPath(selectedPath))
     }
   }, [selectedPath, navigate])
 
-  // The published page is the whole shared draft, which this editor saw only
-  // part of the making of: read back.
-  const handlePublish = useCallback(() => {
-    if (selectedPath) {
-      navigate(docAppPath(selectedPath))
-      loadDoc(selectedPath)
+  // Discarding the draft of a page never published deletes the page, so its
+  // address names nothing and is replaced by the default page's.
+  const handleDiscard = useCallback(async () => {
+    if (!draftOnly) {
+      handleStopEdit()
+      return
     }
-    // The page is published now, so its draft marker has to go.
-    refreshTree().catch(() => {})
-  }, [selectedPath, navigate, loadDoc, refreshTree])
+    const next = await refreshTree().catch(() => [])
+    openDoc(defaultDoc(next, defaultFile), { replace: true })
+  }, [draftOnly, handleStopEdit, refreshTree, openDoc, defaultFile])
+
+  // Something moved: the tree is read again, and an open page or folder that
+  // moved is followed to where it went, its old address replaced.
+  const handleTreeChanged = useCallback(
+    async ({ from, to }: TreeChanged) => {
+      await refreshTree()
+      setExpandedPaths((expanded) => new Set([...expanded].map((path) => movedPath(path, from, to))))
+      if (selectedPath && movedPath(selectedPath, from, to) !== selectedPath) {
+        const moved = movedPath(selectedPath, from, to)
+        navigate(editRequested ? docEditAppPath(moved) : docAppPath(moved), { replace: true })
+      }
+    },
+    [refreshTree, selectedPath, editRequested, navigate],
+  )
+  const { startMove, startRename, drop, dialogs, notice, showUnrewritten } = useTreeEdits({
+    instanceId,
+    tree: tree ?? [],
+    onChanged: handleTreeChanged,
+  })
+
+  // The published page is the whole shared draft, which this editor saw only
+  // part of the making of: read back. A new title can have moved it, in which
+  // case its old address names nothing, so it is replaced.
+  const handlePublish = useCallback(
+    (published: PublishResult) => {
+      showUnrewritten(published.unrewrittenLinks)
+      if (published.path !== selectedPath) {
+        navigate(docAppPath(published.path), { replace: true })
+      } else if (selectedPath) {
+        navigate(docAppPath(selectedPath))
+        loadDoc(selectedPath)
+      }
+      // The page is published now, so its draft marker has to go.
+      refreshTree().catch(() => {})
+    },
+    [selectedPath, navigate, loadDoc, refreshTree, showUnrewritten],
+  )
 
   const handleViewRef = useCallback(
     async (sha: string) => {
@@ -391,8 +451,7 @@ export function DocsBrowser({ instanceId, namespace, defaultFile, onSourceChange
   )
 
   // The open page's path, with the action of the view it is in. Every view of
-  // a page has it: reading, the editor, a version from the history and a page
-  // not published yet.
+  // a page has it: reading, the editor and a version from the history.
   const pathBar = (action?: ReactNode) =>
     selectedPath && (
       <DocPageBar
@@ -426,7 +485,8 @@ export function DocsBrowser({ instanceId, namespace, defaultFile, onSourceChange
             <p className='text-sm text-muted-foreground'>{error}</p>
           </div>
         )}
-        {editing && draft !== null && selectedPath && pathBar(backButton(handleStopEdit))}
+        {/* A page never published has no reading view to go back to. */}
+        {editing && draft !== null && selectedPath && pathBar(draftOnly ? undefined : backButton(handleStopEdit))}
         {editing && draft !== null && selectedPath && (
           <DocEditor
             instanceId={instanceId}
@@ -434,7 +494,7 @@ export function DocsBrowser({ instanceId, namespace, defaultFile, onSourceChange
             filePath={selectedPath}
             document={draft.document}
             onPublish={handlePublish}
-            onDiscard={handleStopEdit}
+            onDiscard={handleDiscard}
             draftBarSlot={draftBarSlot}
           />
         )}
@@ -443,18 +503,6 @@ export function DocsBrowser({ instanceId, namespace, defaultFile, onSourceChange
           <Alert variant='destructive' className='mb-4'>
             <AlertTitle>{editRefused}</AlertTitle>
           </Alert>
-        )}
-        {selectedPath && notPublished && !loading && !editRequested && !error && pathBar()}
-        {selectedPath && notPublished && !loading && !editRequested && !error && (
-          <div className='flex flex-col items-start gap-3 py-16'>
-            <p className='font-medium'>This page isn't published yet.</p>
-            <p className='text-sm text-muted-foreground'>
-              Only a draft of it exists. Readers see it once it has been published.
-            </p>
-            <Button size='sm' onClick={handleStartEdit}>
-              <Pencil /> Edit draft
-            </Button>
-          </div>
         )}
         {reading && viewing && (
           <>
@@ -513,7 +561,10 @@ export function DocsBrowser({ instanceId, namespace, defaultFile, onSourceChange
           selectedPath={selectedPath}
           expandedPaths={expandedPaths}
           onToggle={handleToggle}
+          onRename={startRename}
+          onMove={startMove}
           onDelete={setDeleteTarget}
+          onDrop={drop}
           unpublishedOnly={showUnpublishedOnly}
           onToggleUnpublished={toggleUnpublished}
         />
@@ -522,6 +573,7 @@ export function DocsBrowser({ instanceId, namespace, defaultFile, onSourceChange
       <div className='flex min-w-0 flex-1 flex-col'>
         <ScrollArea className='min-h-0 flex-1'>
           <div ref={contentRef} className='mx-auto w-full min-w-0 max-w-4xl px-4 py-4 sm:px-8 sm:py-6'>
+            {notice}
             {page}
           </div>
         </ScrollArea>
@@ -556,6 +608,7 @@ export function DocsBrowser({ instanceId, namespace, defaultFile, onSourceChange
         onCreate={handleCreate}
       />
       <DeleteDocDialog target={deleteTarget} onCancel={() => setDeleteTarget(null)} onConfirm={handleDeleteConfirm} />
+      {dialogs}
     </div>
   )
 }
