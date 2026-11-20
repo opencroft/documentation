@@ -17,7 +17,7 @@ interface TreeProps {
   changedFiles: Set<string>
   onRename: (entry: DocEntry) => void
   onMove: (entry: DocEntry) => void
-  onDelete: (path: string) => void
+  onDelete: (entry: DocEntry) => void
   onDrop: (drop: DocTreeDrop) => void
 }
 
@@ -88,7 +88,7 @@ export function DocTreePanel({
           renderPageLink={(node, link) => <AppLink to={docAppPath(node.path)} {...link} />}
           onRename={withEntry(onRename)}
           onMove={withEntry(onMove)}
-          onDelete={(node) => onDelete(node.path)}
+          onDelete={withEntry(onDelete)}
           // A filtered tree hides the entries a position counts, so it is not rearranged by dragging.
           onDrop={unpublishedOnly ? undefined : onDrop}
         />

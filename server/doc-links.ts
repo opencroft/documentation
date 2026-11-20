@@ -162,18 +162,33 @@ function decode(text: string): string {
   }
 }
 
-type Outcome = { kind: 'keep' } | { kind: 'replace'; text: string } | { kind: 'report'; reason: string }
+/** A destination that names a file of the repository: its path decoded, and the query or fragment after it. */
+interface RepositoryDestination {
+  decoded: string
+  suffix: string
+  /** Written percent-encoded. */
+  encoded: boolean
+}
 
-function rewriteDestination(dest: Destination, fromPath: string, toPath: string, map: PathMap): Outcome {
-  const raw = dest.raw
+/** The repository path a destination names; null for an anchor, a full address or an empty one. */
+function repositoryDestination(raw: string): RepositoryDestination | null {
   if (!raw || raw.startsWith('#') || raw.startsWith('//') || SCHEME.test(raw)) {
-    return { kind: 'keep' }
+    return null
   }
   const cut = raw.search(/[?#]/)
   const pathPart = cut < 0 ? raw : raw.slice(0, cut)
-  const suffix = cut < 0 ? '' : raw.slice(cut)
   const decoded = decode(pathPart)
-  const encoded = decoded !== pathPart
+  return { decoded, suffix: cut < 0 ? '' : raw.slice(cut), encoded: decoded !== pathPart }
+}
+
+type Outcome = { kind: 'keep' } | { kind: 'replace'; text: string } | { kind: 'report'; reason: string }
+
+function rewriteDestination(dest: Destination, fromPath: string, toPath: string, map: PathMap): Outcome {
+  const named = repositoryDestination(dest.raw)
+  if (!named) {
+    return { kind: 'keep' }
+  }
+  const { decoded, suffix, encoded } = named
 
   if (decoded.startsWith('/')) {
     const target = resolvePath('', decoded)
@@ -216,9 +231,15 @@ function escapeRegExp(text: string): string {
  * can't be told apart from text that merely looks like one and so is shown,
  * never edited. `needles` are the old paths -- a page's path, a folder's path
  * ending in `/`, or a renamed page's old file name. Relative link
- * destinations are not mentions: those are rewritten.
+ * destinations are not mentions: those are rewritten, or for what is deleted,
+ * found by `linksTo`.
  */
-export function findMentions(markdown: string, file: string, needles: string[]): UnrewrittenLink[] {
+export function findMentions(
+  markdown: string,
+  file: string,
+  needles: string[],
+  reason = MENTION_REASON,
+): UnrewrittenLink[] {
   if (needles.length === 0) {
     return []
   }
@@ -238,7 +259,61 @@ export function findMentions(markdown: string, file: string, needles: string[]):
     // A match resumes after the last one, so a file name inside a full path
     // that was just reported is not reported again.
     for (const match of text.matchAll(pattern)) {
-      found.push({ file, line: index + 1, link: match[0], reason: MENTION_REASON })
+      found.push({ file, line: index + 1, link: match[0], reason })
+    }
+  })
+  return found
+}
+
+/** Calls `visit` with each line of `lines` outside fenced code, and its index. */
+function forEachLineOutsideFences(lines: string[], visit: (line: string, index: number) => void): void {
+  let fence: { char: string; length: number } | null = null
+  lines.forEach((line, index) => {
+    const opener = FENCE.exec(line)
+    if (fence) {
+      if (
+        opener &&
+        opener[1][0] === fence.char &&
+        opener[1].length >= fence.length &&
+        !line.slice(opener[0].length).trim()
+      ) {
+        fence = null
+      }
+      return
+    }
+    if (opener) {
+      fence = { char: opener[1][0], length: opener[1].length }
+      return
+    }
+    visit(line, index)
+  })
+}
+
+/** What a link to something deleted is reported with. */
+export const DELETED_LINK_REASON = 'it links to what was deleted'
+
+/** What a mention of a deleted path is reported with. */
+export const DELETED_MENTION_REASON = 'the deleted path is mentioned here'
+
+/**
+ * The links in the page `file` to a path `deleted` holds -- a deleted page, or
+ * anything in a deleted folder -- as written, relative ones and ones from the
+ * repository root alike. Links in code are examples and left out.
+ */
+export function linksTo(markdown: string, file: string, deleted: (path: string) => boolean): UnrewrittenLink[] {
+  const found: UnrewrittenLink[] = []
+  forEachLineOutsideFences(markdown.split('\n'), (line, index) => {
+    for (const dest of destinationsIn(line)) {
+      const named = repositoryDestination(dest.raw)
+      if (!named) {
+        continue
+      }
+      const target = named.decoded.startsWith('/')
+        ? resolvePath('', named.decoded)
+        : resolvePath(dirOf(file), named.decoded)
+      if (target !== null && deleted(target)) {
+        found.push({ file, line: index + 1, link: dest.raw, reason: DELETED_LINK_REASON })
+      }
     }
   })
   return found
@@ -258,25 +333,8 @@ export function rewriteLinks(
 ): { text: string; unrewritten: UnrewrittenLink[] } {
   const lines = markdown.split('\n')
   const unrewritten: UnrewrittenLink[] = []
-  let fence: { char: string; length: number } | null = null
 
-  lines.forEach((line, index) => {
-    const opener = FENCE.exec(line)
-    if (fence) {
-      if (
-        opener &&
-        opener[1][0] === fence.char &&
-        opener[1].length >= fence.length &&
-        !line.slice(opener[0].length).trim()
-      ) {
-        fence = null
-      }
-      return
-    }
-    if (opener) {
-      fence = { char: opener[1][0], length: opener[1].length }
-      return
-    }
+  forEachLineOutsideFences(lines, (line, index) => {
     const found = destinationsIn(line).map((dest) => ({
       dest,
       outcome: rewriteDestination(dest, fromPath, toPath, map),

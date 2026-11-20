@@ -1,9 +1,8 @@
 import type { AppActionContext, AppActionHandler } from '@opencroft/server/apps'
-import { path } from '@opencroft/server/system'
 
 import {
   type DraftEditor,
-  deletePage,
+  deleteInTree,
   editDraft,
   moveInTree,
   publishPage,
@@ -11,7 +10,7 @@ import {
   readDraft,
   retitleFolder,
 } from './docs-drafts'
-import { deleteEmptyDirs, resolveDocPath, resolveNamespaceRoot } from './docs-files'
+import { resolveDocPath } from './docs-files'
 import { docsShow } from './docs-git'
 import { searchDocs } from './docs-search'
 import { formatAnswer } from './search-answer'
@@ -222,25 +221,15 @@ export const docsAppActions: Record<string, AppActionHandler> = {
     return { instanceId: ctx.instanceId, ...result }
   },
 
-  // The App's own UI only: deleting a published page is not offered to agents.
+  // Committed and pushed at once, drafts dropped; links to what goes are reported, not changed.
   delete: async (ctx, args) => {
-    if (!ctx.callerPerson) {
-      throw new Error('Only a person can delete a page, from the Documentation App itself.')
-    }
     const filePath = args.path as string | undefined
-    if (!filePath) {
-      throw new Error('Missing required param: path')
+    const message = args.message as string | undefined
+    if (!filePath || !message) {
+      throw new Error('Missing required params: path, message')
     }
-    const namespace = nsOf(ctx)
-    await resolveDocPath(namespace, filePath)
-    await deletePage(ctx.instanceId, filePath, callerOf(ctx))
-    try {
-      const root = await resolveNamespaceRoot(namespace)
-      await deleteEmptyDirs(namespace, path.dirname(path.resolve(root, filePath)))
-    } catch {
-      // best-effort cleanup only
-    }
-    return { instanceId: ctx.instanceId, path: filePath }
+    const result = await deleteInTree(ctx.instanceId, filePath, message, callerOf(ctx))
+    return { instanceId: ctx.instanceId, ...result }
   },
 
   pull: async (ctx) => {

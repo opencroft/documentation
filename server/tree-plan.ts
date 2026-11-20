@@ -4,7 +4,7 @@
 // imports, so it runs under `node --test` directly.
 
 import { slugify } from '../src/docs/slug.ts'
-import { findMentions, rewriteLinks, type UnrewrittenLink } from './doc-links.ts'
+import { DELETED_MENTION_REASON, findMentions, linksTo, rewriteLinks, type UnrewrittenLink } from './doc-links.ts'
 import {
   type FolderChild,
   type FolderMeta,
@@ -32,6 +32,8 @@ export interface TreeState {
 /** What a plan commits, before its links are rewritten. */
 export interface TreePlan {
   renames: Rename[]
+  /** Pages and folders deleted. */
+  removals: string[]
   /** Meta files and pages the commit holds, by path after the renames. */
   published: Map<string, string>
   message: string
@@ -53,6 +55,11 @@ function baseOf(path: string): string {
 
 function join(folder: string, name: string): string {
   return folder ? `${folder}/${name}` : name
+}
+
+/** Whether `path` is `ancestor` or inside it. */
+function within(path: string, ancestor: string): boolean {
+  return path === ancestor || path.startsWith(`${ancestor}/`)
 }
 
 function folderLabel(folder: string): string {
@@ -140,7 +147,12 @@ function isCommitted(state: TreeState, path: string): boolean {
  * written.
  */
 function committedOrder(state: TreeState, plan: TreePlan): TreePlan {
-  const files = [...state.head.map((file) => renamedPath(file, plan.renames)), ...plan.published.keys()]
+  const files = [
+    ...state.head
+      .filter((file) => !plan.removals.some((removed) => within(file, removed)))
+      .map((file) => renamedPath(file, plan.renames)),
+    ...plan.published.keys(),
+  ]
   const published = new Map<string, string>()
   for (const [path, text] of plan.published) {
     if (baseOf(path) !== META_FILE) {
@@ -189,7 +201,13 @@ export function planMove(state: TreeState, path: string, toFolder: string, posit
         order: placeInOrder(shownOrder(state, from), name, position ?? Number.POSITIVE_INFINITY),
       }),
     )
-    return committedOrder(state, { renames: [], published, message: `Reorder ${from || 'the top level'}`, path })
+    return committedOrder(state, {
+      renames: [],
+      removals: [],
+      published,
+      message: `Reorder ${from || 'the top level'}`,
+      path,
+    })
   }
   if (folder && (target === path || target.startsWith(`${path}/`))) {
     throw new Error("A folder can't be moved into itself.")
@@ -212,10 +230,45 @@ export function planMove(state: TreeState, path: string, toFolder: string, posit
   )
   return committedOrder(state, {
     renames: [{ from: path, to }],
+    removals: [],
     published,
     message: `Move ${path} to ${target || 'the top level'}`,
     path: to,
   })
+}
+
+/** The page or folder a delete of `path` acts on, as the tree names it: without the slashes around it. */
+function deletedPath(path: string): string {
+  return path.trim().replace(/^\/+|\/+$/g, '')
+}
+
+/** The pages, published or drafts, that deleting `path` takes with it. */
+export function deletedPages(state: TreeState, path: string): string[] {
+  const target = deletedPath(path)
+  return target ? listedPages(state).filter((page) => within(page, target)) : []
+}
+
+/**
+ * Deletes the page or folder at `path` -- a folder with everything in it --
+ * and takes its name out of its folder's meta. A folder the delete empties
+ * keeps its meta otherwise, as a move leaves it.
+ */
+export function planDelete(state: TreeState, path: string, message: string): TreePlan {
+  const target = deletedPath(path)
+  if (!target) {
+    throw new Error("The top level can't be deleted.")
+  }
+  if (!isFolder(state, target) && !isPage(state, target)) {
+    throw new Error(`There is no page or folder "${path}".`)
+  }
+  const folder = dirOf(target)
+  const published = new Map<string, string>()
+  // The deleted name is not in what the commit holds, so writing the meta as
+  // it is takes it out of the order.
+  if (state.metas.has(folder)) {
+    published.set(metaPathOf(folder), metaText(state, folder, {}))
+  }
+  return committedOrder(state, { renames: [], removals: [target], published, message, path: target })
 }
 
 /** Gives the folder at `path` the title `title`, its name on disk following the title. */
@@ -239,7 +292,7 @@ export function planFolderTitle(state: TreeState, path: string, title: string): 
   const published = new Map<string, string>()
   if (name === current) {
     published.set(metaPathOf(path), metaText(state, path, { title: clean }))
-    return committedOrder(state, { renames: [], published, message: `Retitle ${path} "${clean}"`, path })
+    return committedOrder(state, { renames: [], removals: [], published, message: `Retitle ${path} "${clean}"`, path })
   }
   if (nameTaken(state, parent, name, current)) {
     throw new Error(`${folderLabel(parent)} already has a page or folder named "${name}".`)
@@ -252,6 +305,7 @@ export function planFolderTitle(state: TreeState, path: string, title: string): 
   )
   return committedOrder(state, {
     renames: [{ from: path, to }],
+    removals: [],
     published,
     message: `Rename ${path} to ${to}`,
     path: to,
@@ -294,14 +348,14 @@ export function planPublish(state: TreeState, path: string, draft: string, messa
     metaPathOf(folder),
     metaText(state, folder, { order: shownOrder(state, folder).map((entry) => (entry === current ? name : entry)) }),
   )
-  return committedOrder(state, { renames: [{ from: path, to }], published, message, path: to })
+  return committedOrder(state, { renames: [{ from: path, to }], removals: [], published, message, path: to })
 }
 
 /** The clone's pages as the link rewrite reads them. */
 export interface LinkSources {
   /** A page's text in the last commit. */
   readHead(path: string): Promise<string>
-  /** Committed pages that may link to what moves; other committed pages are not read. */
+  /** Committed pages that may link to what moves or is deleted; other committed pages are not read. */
   candidates: string[]
   /** Every page whose working text differs from the last commit -- drafts, and pages only in the working tree -- with that text. */
   drafts: Map<string, string>
@@ -330,8 +384,10 @@ function mentionNeedles(renames: Rename[]): string[] {
 /**
  * The plan as one commit: every relative link to what moves, and from what
  * moves, rewritten in the published pages and in the drafts, and every
- * mention of an old path reported. `publishing` is the page whose draft the
- * plan publishes, which has no draft afterwards.
+ * mention of an old path reported. Links to what is deleted, and mentions of
+ * its path, in the pages that stay are reported and left as written.
+ * `publishing` is the page whose draft the plan publishes, which has no draft
+ * afterwards.
  */
 export async function withLinks(
   state: TreeState,
@@ -378,8 +434,25 @@ export async function withLinks(
     }
   }
 
+  if (plan.removals.length > 0) {
+    const deleted = (path: string) => plan.removals.some((removed) => within(path, removed))
+    const needles = plan.removals.map((removed) => (isListed(removed) ? removed : `${removed}/`))
+    const report = (file: string, text: string) => {
+      if (!deleted(file)) {
+        note(linksTo(text, file, deleted))
+        note(findMentions(text, file, needles, DELETED_MENTION_REASON))
+      }
+    }
+    for (const file of sources.candidates) {
+      report(file, await sources.readHead(file))
+    }
+    for (const [file, draft] of sources.drafts) {
+      report(file, draft)
+    }
+  }
+
   return {
-    change: { renames: plan.renames, published, drafts, message: plan.message },
+    change: { renames: plan.renames, removals: plan.removals, published, drafts, message: plan.message },
     unrewritten: [...unrewritten.values()],
   }
 }

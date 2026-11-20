@@ -19,7 +19,7 @@ function parentOf(path: string): string {
 }
 
 /** Whether `path` is `ancestor` or inside it. */
-function within(path: string, ancestor: string): boolean {
+export function within(path: string, ancestor: string): boolean {
   return path === ancestor || path.startsWith(`${ancestor}/`)
 }
 

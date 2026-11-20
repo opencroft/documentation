@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
+import { DELETED_LINK_REASON, DELETED_MENTION_REASON } from './doc-links.ts'
 import type { FolderMeta } from './doc-meta.ts'
 import {
+  deletedPages,
   type LinkSources,
+  planDelete,
   planFolderTitle,
   planMove,
   planPublish,
@@ -238,6 +241,77 @@ test('mentions of the old path in published pages and drafts are listed, not edi
   )
   assert.equal(change.published.has('b.md'), false)
   assert.equal(change.drafts.has('b.md'), false)
+})
+
+test('deleting a page takes its name out of its folder meta and keeps the title', () => {
+  const titled = state([...repo.head, 'guides/_meta.json'], undefined, [
+    ['guides', { title: 'Guides', order: ['setup.md', 'intro.md'] }],
+  ])
+  const plan = planDelete(titled, 'guides/setup.md', 'Delete setup')
+  assert.deepEqual(plan.removals, ['guides/setup.md'])
+  assert.deepEqual(plan.renames, [])
+  assert.equal(plan.path, 'guides/setup.md')
+  assert.equal(plan.message, 'Delete setup')
+  assert.deepEqual(JSON.parse(plan.published.get('guides/_meta.json') ?? ''), { title: 'Guides', order: ['intro.md'] })
+})
+
+test('deleting a folder takes it out of its parent meta, and writes no meta where the parent has none', () => {
+  const ordered = state([...repo.head, '_meta.json'], undefined, [['', { order: ['guides', 'a.md', 'api'] }]])
+  const plan = planDelete(ordered, '/guides/', 'Delete guides')
+  assert.deepEqual(plan.removals, ['guides'])
+  assert.deepEqual([...plan.published.keys()], ['_meta.json'])
+  assert.deepEqual(JSON.parse(plan.published.get('_meta.json') ?? ''), { order: ['a.md', 'api'] })
+  assert.deepEqual(planDelete(repo, 'api', 'Delete api').published, new Map())
+})
+
+test('deleting a page the folder meta never named writes no meta', () => {
+  const head = ['a.md', 'b.md', '_meta.json']
+  const drafted = state(head, [...head, 'draft.md'], [['', { order: ['b.md', 'a.md'] }]])
+  assert.deepEqual(planDelete(drafted, 'draft.md', 'Delete draft').published, new Map())
+})
+
+test('a delete is refused for the top level and for a path that names no page or folder', () => {
+  assert.throws(() => planDelete(repo, '', 'x'), /The top level can't be deleted/)
+  assert.throws(() => planDelete(repo, '/', 'x'), /The top level can't be deleted/)
+  assert.throws(() => planDelete(repo, 'missing.md', 'x'), /There is no page or folder "missing.md"/)
+  assert.throws(() => planDelete(repo, 'guides/img/x.png', 'x'), /There is no page or folder/)
+  assert.throws(() => planDelete(repo, 'gui', 'x'), /There is no page or folder "gui"/)
+})
+
+test('the pages a delete takes are the page itself, or every page in the folder, drafts included', () => {
+  const drafted = state(repo.head, [...repo.head, 'guides/new.md', 'guides-old/x.md'])
+  assert.deepEqual(deletedPages(drafted, 'guides/'), ['guides/intro.md', 'guides/setup.md', 'guides/new.md'])
+  assert.deepEqual(deletedPages(drafted, 'a.md'), ['a.md'])
+  assert.deepEqual(deletedPages(drafted, ''), [])
+})
+
+test('a delete lists the links and mentions left pointing at what went, and changes no page', async () => {
+  const s = state(['index.md', 'guides/intro.md', 'guides/setup.md', 'api/ref.md', 'other.md'])
+  const { change, unrewritten } = await withLinks(
+    s,
+    planDelete(s, 'guides', 'Delete guides'),
+    sources(
+      {
+        'index.md': '# Home\n[intro](guides/intro.md#start)\n[all](guides/)\n',
+        'guides/intro.md': '[setup](setup.md)\n',
+        'api/ref.md': 'See `guides/setup.md`.\n```\n[x](../guides/intro.md)\n```\n',
+        'other.md': '[ref](api/ref.md)\n',
+      },
+      { 'other.md': '[ref](api/ref.md) and [setup](/guides/setup.md)\n' },
+    ),
+  )
+  assert.deepEqual(
+    unrewritten.map((u) => [u.file, u.line, u.link, u.reason]),
+    [
+      ['index.md', 2, 'guides/intro.md#start', DELETED_LINK_REASON],
+      ['index.md', 3, 'guides/', DELETED_LINK_REASON],
+      ['api/ref.md', 1, 'guides/', DELETED_MENTION_REASON],
+      ['other.md', 1, '/guides/setup.md', DELETED_LINK_REASON],
+    ],
+  )
+  assert.deepEqual(change.removals, ['guides'])
+  assert.deepEqual(change.published, new Map())
+  assert.deepEqual(change.drafts, new Map())
 })
 
 test('links that cannot be rewritten are listed once', async () => {

@@ -7,6 +7,7 @@ import { useEffect, useState } from 'react'
 import { LogoLoader } from '@/components/ui/logo-loader'
 import { ChatDock } from './docs/chat-panel'
 import { routeOf } from './docs/doc-routes'
+import type { DocView } from './docs/doc-selection'
 import { DocsBrowser } from './docs/docs-page'
 import type { NamespaceEntry } from './docs/types'
 
@@ -22,6 +23,7 @@ export function DocsAppView({ instanceId, spaceSlug }: AppComponentProps) {
   const route = routeOf(path, search)
   const file = route.page === 'doc' ? route.doc : null
   const [source, setSource] = useState('')
+  const [view, setView] = useState<DocView>('page')
 
   useEffect(() => {
     let cancelled = false
@@ -62,6 +64,7 @@ export function DocsAppView({ instanceId, spaceSlug }: AppComponentProps) {
       namespace={entry.namespace}
       file={file ?? ''}
       source={source}
+      view={view}
     >
       <DocsBrowser
         key={entry.namespace}
@@ -69,6 +72,7 @@ export function DocsAppView({ instanceId, spaceSlug }: AppComponentProps) {
         namespace={entry.namespace}
         defaultFile='README.md'
         onSourceChange={setSource}
+        onViewChange={setView}
       />
     </ChatDock>
   )

@@ -1,6 +1,6 @@
 {
   "name": "documentation",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "license": "MIT",
   "private": true,
   "description": "Documentation App — clone, browse and edit a docs git repository added to a space.",

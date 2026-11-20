@@ -4,7 +4,6 @@ import { fs, path } from '@opencroft/server/system'
 import type { UnrewrittenLink } from './doc-links'
 import {
   docsCommitTree,
-  docsDeleteFile,
   docsDiscardFile,
   docsLinkSources,
   docsPublishFile,
@@ -15,7 +14,16 @@ import {
   gitAdd,
 } from './docs-git'
 import { withTitle } from './page-title'
-import { planFolderTitle, planMove, planPublish, type TreePlan, type TreeState, withLinks } from './tree-plan'
+import {
+  deletedPages,
+  planDelete,
+  planFolderTitle,
+  planMove,
+  planPublish,
+  type TreePlan,
+  type TreeState,
+  withLinks,
+} from './tree-plan'
 
 // A page's draft -- its file in the instance's working tree -- is one shared
 // document: everyone editing the page edits the same draft at once, an
@@ -218,10 +226,25 @@ export interface PublishResult extends TreeChangeResult {
   previousPath?: string
 }
 
+/** Makes the change `plan` reads off the clone, links rewritten, as one commit by `by`. */
+async function commitChange(
+  nodeId: string,
+  by: DraftEditor,
+  plan: (state: TreeState) => TreePlan | Promise<TreePlan>,
+  publishing?: string,
+): Promise<TreeChangeResult> {
+  const state = await docsTreeState(nodeId)
+  const planned = await plan(state)
+  const sources = await docsLinkSources(nodeId, [...planned.renames.map(({ from }) => from), ...planned.removals])
+  const { change, unrewritten } = await withLinks(state, planned, sources, publishing)
+  const sha = await docsCommitTree(nodeId, change, by.name)
+  return { path: planned.path, sha, unrewrittenLinks: unrewritten }
+}
+
 /**
- * Makes the change `plan` reads off the clone, links rewritten, as one commit
- * by `by` -- while no draft is open, so every draft is in its file and
- * editors reopen on the files as the change left them.
+ * Makes the change `plan` reads off the clone as one commit by `by` -- while
+ * no draft is open, so every draft is in its file and editors reopen on the
+ * files as the change left them.
  */
 function changeTree(
   nodeId: string,
@@ -229,14 +252,7 @@ function changeTree(
   plan: (state: TreeState) => TreePlan | Promise<TreePlan>,
   publishing?: string,
 ): Promise<TreeChangeResult> {
-  return collab.markdown.whileClosed(KIND, null, async () => {
-    const state = await docsTreeState(nodeId)
-    const planned = await plan(state)
-    const sources = await docsLinkSources(nodeId, planned.renames)
-    const { change, unrewritten } = await withLinks(state, planned, sources, publishing)
-    const sha = await docsCommitTree(nodeId, change, by.name)
-    return { path: planned.path, sha, unrewrittenLinks: unrewritten }
-  })
+  return collab.markdown.whileClosed(KIND, null, () => commitChange(nodeId, by, plan, publishing))
 }
 
 /**
@@ -323,14 +339,31 @@ export function discardPage(nodeId: string, filePath: string): Promise<void> {
   )
 }
 
-/** Deletes the page, as a commit by `by`, its draft dropped for everyone editing it. */
-export function deletePage(nodeId: string, filePath: string, by: DraftEditor): Promise<void> {
-  const key = keyOf(nodeId, filePath)
-  return inTurn(nodeId, () =>
-    collab.markdown.whileClosed(KIND, [key], () => docsDeleteFile(nodeId, filePath, by.name), {
-      discard: true,
-    }),
-  )
+/**
+ * Deletes the page or folder at `target`, as a commit by `by` with `message`.
+ * Its pages' drafts go with it, for everyone editing one: those pages are
+ * closed and their drafts dropped while the deletion is made, so no editor
+ * can store one back. Other pages stay open: the deletion writes none of them.
+ */
+export function deleteInTree(
+  nodeId: string,
+  target: string,
+  message: string,
+  by: DraftEditor,
+): Promise<TreeChangeResult> {
+  return inTurn(nodeId, async () => {
+    const keys = deletedPages(await docsTreeState(nodeId), target).map((page) => keyOf(nodeId, page))
+    // Stored first, so a deletion that fails leaves each draft as it was typed.
+    for (const key of keys) {
+      await collab.markdown.flush(KIND, key)
+    }
+    return collab.markdown.whileClosed(
+      KIND,
+      keys,
+      () => commitChange(nodeId, by, (state) => planDelete(state, target, message)),
+      { discard: true },
+    )
+  })
 }
 
 /**

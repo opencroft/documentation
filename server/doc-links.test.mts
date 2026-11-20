@@ -1,7 +1,16 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { findMentions, MENTION_REASON, type PathMap, relativePath, resolvePath, rewriteLinks } from './doc-links.ts'
+import {
+  DELETED_LINK_REASON,
+  findMentions,
+  linksTo,
+  MENTION_REASON,
+  type PathMap,
+  relativePath,
+  resolvePath,
+  rewriteLinks,
+} from './doc-links.ts'
 
 /** `from` (a page or a folder) moves to `to`; everything else stays. */
 function moving(from: string, to: string): PathMap {
@@ -121,6 +130,31 @@ test("a folder's mention is its path with a slash", () => {
     ['guides/', 'guides/'],
   )
   assert.deepEqual(findMentions('anything', 'x.md', []), [])
+})
+
+test('links to what is deleted are found by where they lead, relative or from the root, as written', () => {
+  const gone = (path: string) => path === 'guides' || path.startsWith('guides/')
+  const page = [
+    '[intro](../guides/intro.md#start) [api](../api/ref.md)',
+    '[all](/guides/) <a href="../guides/setup%20page.md">setup</a>',
+    '[ref]: ../guides/intro.md',
+    '```',
+    '[example](../guides/intro.md)',
+    '```',
+    '`[code](../guides/intro.md)` [anchor](#guides) [web](https://example.com/guides/intro.md)',
+    '[near](../guides-old/x.md)',
+  ].join('\n')
+  assert.deepEqual(
+    linksTo(page, 'notes/x.md', gone).map((link) => [link.line, link.link]),
+    [
+      [1, '../guides/intro.md#start'],
+      [2, '/guides/'],
+      [2, '../guides/setup%20page.md'],
+      [3, '../guides/intro.md'],
+    ],
+  )
+  assert.equal(linksTo(page, 'notes/x.md', gone)[0].reason, DELETED_LINK_REASON)
+  assert.equal(linksTo(page, 'notes/x.md', gone)[0].file, 'notes/x.md')
 })
 
 test('a destination with balanced parentheses is read whole', () => {

@@ -91,20 +91,6 @@ export async function createFile(namespace: string, inputPath: string, title: st
   return relative
 }
 
-/** Prune now-empty parent directories up to (but not including) the namespace root. */
-export async function deleteEmptyDirs(namespace: string, dir: string): Promise<void> {
-  const root = await resolveNamespaceRoot(namespace)
-  let current = dir
-  while (current.length > root.length && current.startsWith(root)) {
-    const entries = await fs.readdir(current)
-    if (entries.length > 0) {
-      return
-    }
-    await fs.rmdir(current)
-    current = path.dirname(current)
-  }
-}
-
 // ─── File tree listing ─────────────────────────────────────────────────────
 
 /** Repository-relative paths of the `.md` files in the working tree, dot-directories skipped. */

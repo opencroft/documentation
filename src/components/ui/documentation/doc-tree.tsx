@@ -63,7 +63,7 @@ export interface DocTreeProps {
   onRename?: (node: DocTreeNode) => void
   /** Move… in every row's menu. */
   onMove?: (node: DocTreeNode) => void
-  /** Delete in a page's menu. */
+  /** Delete in every row's menu. */
   onDelete?: (node: DocTreeNode) => void
   /** A row dragged to a new place. Without it rows are not dragged. */
   onDrop?: (drop: DocTreeDrop) => void
@@ -317,6 +317,7 @@ function TreeLevel({ nodes, depth, ...tree }: LevelProps & { nodes: DocTreeNode[
                 menu={{
                   onRename: onRename && (() => onRename(node)),
                   onMove: onMove && (() => onMove(node)),
+                  onDelete: onDelete && (() => onDelete(node)),
                 }}
               >
                 <button

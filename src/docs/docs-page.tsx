@@ -1,4 +1,4 @@
-import { callAppAction, invoke } from '@opencroft/client/actions'
+import { invoke } from '@opencroft/client/actions'
 import { AppLink, AppSidebar, useAppLocation, useAppNavigate } from '@opencroft/client/app'
 import {
   Button,
@@ -16,10 +16,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Alert, AlertTitle } from '@/components/ui/alert'
 import { DocPageBar } from '@/components/ui/documentation/doc-page-bar'
 import { LogoLoader } from '@/components/ui/logo-loader'
-import { DeleteDocDialog } from './doc-dialogs'
 import { DocDiff } from './doc-diff'
 import { DocEditor } from './doc-editor'
 import { defaultDoc, docAppPath, docEditAppPath, folderPage, routeOf } from './doc-routes'
+import type { DocView } from './doc-selection'
 import { DocTreePanel } from './doc-tree-nav'
 import { DocsTitleBar } from './docs-title-bar'
 import { extractToc, MarkdownContent } from './markdown-content'
@@ -28,7 +28,7 @@ import { NewDocDialog } from './new-doc-dialog'
 import { type OutlineTab, PageOutline } from './page-outline'
 import { SearchPage } from './search-page'
 import { type TreeChanged, useTreeEdits } from './tree-edits'
-import { movedPath } from './tree-moves.ts'
+import { movedPath, within } from './tree-moves.ts'
 import type { DocEntry, LogEntry, PublishResult } from './types'
 import { useElementWidth } from './use-element-width'
 import { useHeadingTracking } from './use-heading-tracking'
@@ -64,6 +64,10 @@ interface DocsBrowserProps {
    *  cannot be turned back into the file's own words, so anything quoting the
    *  document needs the source itself. */
   onSourceChange?: (source: string) => void
+  /** Which view of the open page is on screen: its shared draft in the editor
+   *  and on a page never published, a version's changes picked in the
+   *  history, the published page otherwise. */
+  onViewChange?: (view: DocView) => void
 }
 
 /**
@@ -76,7 +80,7 @@ interface DocsBrowserProps {
  * heading. What changes with the width is where the outline is — beside the
  * page or in a sheet — and the host's title bar and sidebar carry the rest.
  */
-export function DocsBrowser({ instanceId, namespace, defaultFile, onSourceChange }: DocsBrowserProps) {
+export function DocsBrowser({ instanceId, namespace, defaultFile, onSourceChange, onViewChange }: DocsBrowserProps) {
   const location = useAppLocation()
   const navigate = useAppNavigate()
   const route = routeOf(location.path, location.search)
@@ -128,7 +132,6 @@ export function DocsBrowser({ instanceId, namespace, defaultFile, onSourceChange
   const [createOpen, setCreateOpen] = useState(false)
   // Each opening of New document is a fresh dialog, starting from the open page's folder.
   const [createKey, setCreateKey] = useState(0)
-  const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
 
   const [showUnpublishedOnly, setShowUnpublishedOnly] = useState(false)
   const [gitChangedFiles, setGitChangedFiles] = useState<Set<string>>(new Set())
@@ -246,6 +249,14 @@ export function DocsBrowser({ instanceId, namespace, defaultFile, onSourceChange
     }
   }, [selectedPath, draftOnly, editRequested, editRefused, navigate])
 
+  // The editor shows the page's draft, and so does a page with no published
+  // version; a version's changes are shown only while reading (see the page
+  // below), so the editor wins over a version still picked in the history.
+  const viewingRef = viewing?.entry.sha ?? null
+  useEffect(() => {
+    onViewChange?.(editRequested || draftOnly ? 'draft' : viewingRef ? `changes:${viewingRef}` : 'page')
+  }, [editRequested, draftOnly, viewingRef, onViewChange])
+
   // Display shows the published page; edit mode opens the page's draft, the
   // one everyone editing the page shares, unpublished edits and all. A page
   // whose draft can't be opened is shown read-only, at its reading address.
@@ -295,19 +306,28 @@ export function DocsBrowser({ instanceId, namespace, defaultFile, onSourceChange
   }, [draftOnly, handleStopEdit, refreshTree, openDoc, defaultFile])
 
   // Something moved: the tree is read again, and an open page or folder that
-  // moved is followed to where it went, its old address replaced.
+  // moved is followed to where it went, its old address replaced. An open page
+  // that was deleted, or was in a deleted folder, leaves an address that names
+  // nothing: it is replaced by the default page's rather than left for Back.
   const handleTreeChanged = useCallback(
     async ({ from, to }: TreeChanged) => {
-      await refreshTree()
+      const next = await refreshTree()
+      if (to === null) {
+        setExpandedPaths((expanded) => new Set([...expanded].filter((path) => !within(path, from))))
+        if (selectedPath && within(selectedPath, from)) {
+          openDoc(defaultDoc(next, defaultFile), { replace: true })
+        }
+        return
+      }
       setExpandedPaths((expanded) => new Set([...expanded].map((path) => movedPath(path, from, to))))
       if (selectedPath && movedPath(selectedPath, from, to) !== selectedPath) {
         const moved = movedPath(selectedPath, from, to)
         navigate(editRequested ? docEditAppPath(moved) : docAppPath(moved), { replace: true })
       }
     },
-    [refreshTree, selectedPath, editRequested, navigate],
+    [refreshTree, selectedPath, editRequested, navigate, openDoc, defaultFile],
   )
-  const { startMove, startRename, drop, dialogs, notice, showUnrewritten } = useTreeEdits({
+  const { startMove, startRename, startDelete, drop, dialogs, notice, showUnrewritten } = useTreeEdits({
     instanceId,
     tree: tree ?? [],
     onChanged: handleTreeChanged,
@@ -380,22 +400,6 @@ export function DocsBrowser({ instanceId, namespace, defaultFile, onSourceChange
     [refreshTree, navigate, namespace],
   )
 
-  const handleDeleteConfirm = useCallback(async () => {
-    if (!deleteTarget) {
-      return
-    }
-    // As an App action, so the deletion's commit names the signed-in person.
-    await callAppAction(instanceId, 'delete', { path: deleteTarget })
-    const next = await refreshTree()
-    if (selectedPath === deleteTarget) {
-      // The deleted page's address no longer names anything, so it is
-      // replaced rather than left behind for Back to return to.
-      openDoc(defaultDoc(next, defaultFile), { replace: true })
-      setDocContent(null)
-    }
-    setDeleteTarget(null)
-  }, [deleteTarget, selectedPath, refreshTree, openDoc, defaultFile, instanceId])
-
   // A version's changes are not the page the outline's headings point into.
   const tocItems = useMemo(() => (viewing ? [] : extractToc(renderedHtml)), [viewing, renderedHtml])
 
@@ -443,7 +447,7 @@ export function DocsBrowser({ instanceId, namespace, defaultFile, onSourceChange
       registerToc={registerToc}
       onHeadingClick={handleHeadingClick}
       fileLog={fileLog}
-      viewingRef={viewing?.entry.sha ?? null}
+      viewingRef={viewingRef}
       onViewRef={handleViewRef}
       onBackToCurrent={handleBackToCurrent}
       onChosen={() => setOutlineOpen(false)}
@@ -563,7 +567,7 @@ export function DocsBrowser({ instanceId, namespace, defaultFile, onSourceChange
           onToggle={handleToggle}
           onRename={startRename}
           onMove={startMove}
-          onDelete={setDeleteTarget}
+          onDelete={startDelete}
           onDrop={drop}
           unpublishedOnly={showUnpublishedOnly}
           onToggleUnpublished={toggleUnpublished}
@@ -607,7 +611,6 @@ export function DocsBrowser({ instanceId, namespace, defaultFile, onSourceChange
         initialFolder={folderOf(selectedPath)}
         onCreate={handleCreate}
       />
-      <DeleteDocDialog target={deleteTarget} onCancel={() => setDeleteTarget(null)} onConfirm={handleDeleteConfirm} />
       {dialogs}
     </div>
   )

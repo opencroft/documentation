@@ -5,10 +5,11 @@ import { execFile, fs, path } from '@opencroft/server/system'
 import { commitAs } from './commit-identity'
 import { type FolderMeta, META_FILE, parseMeta } from './doc-meta'
 import { isListed } from './doc-tree'
+import { commitPage, discardPage, literalPaths } from './page-git'
 import { titlesAt } from './page-title'
 import { pullKeepingDrafts } from './pull-keeping-drafts'
 import { throttledRefresh, waitAtMost } from './refresh-throttle'
-import { commitTreeChange, type Rename, type TreeChange, type WorkingFiles } from './tree-commit'
+import { commitTreeChange, type Git, type TreeChange, type WorkingFiles } from './tree-commit'
 import type { LinkSources, TreeState } from './tree-plan'
 
 // ─── Types ──────────────────────────────────────────────────────────────
@@ -99,6 +100,11 @@ function buildAuthUrl(repoUrl: string, username?: string, token?: string): strin
 // quoted octal escape that matches no file the tree lists.
 async function gitExec(repoDir: string, ...args: string[]): Promise<string> {
   return execFile('git', ['-c', 'safe.directory=*', '-c', 'core.quotePath=false', '-C', repoDir, ...args])
+}
+
+/** Git in the clone, for commands that name files: each path is a name, never a pattern. */
+function gitOn(repoDir: string): Git {
+  return literalPaths((...args) => gitExec(repoDir, ...args))
 }
 
 function isCloned(repoDir: string): Promise<boolean> {
@@ -256,7 +262,7 @@ export async function docsLog(nodeId: string, filePath?: string, count?: number)
     args.push('--', filePath)
   }
 
-  const output = await gitExec(repoDir, ...args)
+  const output = await gitOn(repoDir)(...args)
   return output
     .trim()
     .split('\n')
@@ -326,12 +332,7 @@ function pushFailure(err: unknown, secrets: { token?: string }, what: string): E
   )
 }
 
-/**
- * Commit and push a single file. Uses `git commit -- <path>` (the
- * --only form) so other staged changes in the index are not pulled
- * into this commit. The file is staged first to handle the
- * untracked-new-file case.
- */
+/** Commits a single page's draft, other pages' drafts left out, and pushes it. */
 export async function docsPublishFile(
   sourceId: string,
   filePath: string,
@@ -339,18 +340,9 @@ export async function docsPublishFile(
   author: string,
 ): Promise<{ sha: string; message: string }> {
   return withPushAccess(sourceId, async ({ repoDir, data, secrets }) => {
-    await gitExec(repoDir, 'add', '--', filePath)
-    // `diff --quiet` exits 1 when the page differs from the last commit.
-    const unchanged = await gitExec(repoDir, 'diff', '--cached', '--quiet', 'HEAD', '--', filePath).then(
-      () => true,
-      () => false,
-    )
-    if (unchanged) {
-      throw new Error(`Nothing to publish: ${filePath} has no changes.`)
-    }
-    await gitExec(repoDir, ...commitAs(author), 'commit', '-m', message, '--', filePath)
+    await commitPage((...args) => gitExec(repoDir, ...args), filePath, message, commitAs(author))
     // The page's draft goes back to being a draft when the push fails.
-    await pushOrUndo(repoDir, data, secrets, 'publish', async () => {})
+    await pushOrUndo(repoDir, data, secrets, 'publish')
     const sha = (await gitExec(repoDir, 'rev-parse', 'HEAD')).trim()
     return { sha, message }
   })
@@ -466,15 +458,15 @@ export async function docsFolderMetas(sourceId: string): Promise<Map<string, Fol
 }
 
 /**
- * The pages a change that moves `renames` reads links from: committed pages
- * whose text names what moves (by its last path segment, as written or
+ * The pages a change that moves or deletes `paths` reads links from: committed
+ * pages whose text names one of them (by its last path segment, as written or
  * percent-encoded), and every page whose working text is not the committed
  * one.
  */
-export async function docsLinkSources(sourceId: string, renames: Rename[]): Promise<LinkSources> {
+export async function docsLinkSources(sourceId: string, paths: string[]): Promise<LinkSources> {
   const repoDir = await docsRepoDir(sourceId)
   const needles = new Set<string>()
-  for (const { from } of renames) {
+  for (const from of paths) {
     const base = from.slice(from.lastIndexOf('/') + 1)
     needles.add(base)
     needles.add(encodeURIComponent(base))
@@ -542,22 +534,19 @@ export async function docsPublishedTitles(sourceId: string): Promise<Map<string,
  * Pushes the commit just made, or takes it back. A commit whose push failed
  * would stay in the clone, ahead of the remote: never published, no longer a
  * draft, and swept into the next push. So on a failed push the commit is
- * undone -- its changes left staged, as they were before it -- `restore`
- * puts back anything else the commit took away, and the push's error is
- * thrown, credentials removed, for the person who asked.
+ * undone -- its changes left staged, as they were before it -- and the push's
+ * error is thrown, credentials removed, for the person who asked.
  */
 async function pushOrUndo(
   repoDir: string,
   data: DocsSourceData,
   secrets: { username?: string; token?: string },
   what: string,
-  restore: () => Promise<void>,
 ): Promise<void> {
   try {
     await gitExec(repoDir, 'push', 'origin', data.branch || 'main')
   } catch (err) {
     await gitExec(repoDir, 'reset', '--soft', 'HEAD~1')
-    await restore()
     throw pushFailure(err, secrets, what)
   }
 }
@@ -567,7 +556,7 @@ export async function docsAddFile(nodeId: string, filePath: string): Promise<voi
   const cloned = await isCloned(repoDir)
   if (!cloned) return
 
-  await gitExec(repoDir, 'add', filePath)
+  await gitOn(repoDir)('add', '--', filePath)
 }
 
 /**
@@ -577,42 +566,10 @@ export async function docsAddFile(nodeId: string, filePath: string): Promise<voi
  */
 export async function gitAdd(repoDir: string, filePath: string): Promise<void> {
   try {
-    await gitExec(repoDir, 'add', '--', filePath)
+    await gitOn(repoDir)('add', '--', filePath)
   } catch {
     // best-effort — do not block doc operations if git-add fails
   }
-}
-
-/**
- * Delete a doc from the working tree, then commit
- * and push the deletion. For uncommitted-only files, the commit/push
- * step is skipped — the file just gets removed.
- */
-export async function docsDeleteFile(nodeId: string, filePath: string, author: string): Promise<void> {
-  const repoDir = await docsRepoDir(nodeId)
-  const cloned = await isCloned(repoDir)
-  if (!cloned) {
-    throw new Error('Repository is not cloned')
-  }
-
-  const inHead = await fileInHead(repoDir, filePath)
-  if (!inHead) {
-    // Untracked / staged-new file — unstage if staged, then unlink.
-    await gitExec(repoDir, 'rm', '--cached', '--ignore-unmatch', '--', filePath).catch(() => {})
-    await fs.rm(`${repoDir}/${filePath}`).catch(() => {})
-    return
-  }
-
-  await withPushAccess(nodeId, async ({ data, secrets }) => {
-    // `--force` drops a draft of the page along with it; the commit names the
-    // page alone, so other pages' staged drafts stay drafts.
-    await gitExec(repoDir, 'rm', '--force', '--', filePath)
-    await gitExec(repoDir, ...commitAs(author), 'commit', '-m', `Delete ${filePath}`, '--', filePath)
-    // A failed push brings the page back as published.
-    await pushOrUndo(repoDir, data, secrets, 'delete the page', () =>
-      gitExec(repoDir, 'checkout', 'HEAD', '--', filePath).then(() => {}),
-    )
-  })
 }
 
 /**
@@ -675,33 +632,12 @@ export async function docsDiscardFile(nodeId: string, filePath: string): Promise
   if (!cloned) {
     throw new Error('Repository is not cloned')
   }
-  const inHead = await fileInHead(repoDir, filePath)
-  if (inHead) {
-    // From HEAD, index and working tree both: a draft is staged as it is
-    // saved, and `checkout -- path` alone restores the staged draft.
-    await gitExec(repoDir, 'checkout', 'HEAD', '--', filePath)
-    return
-  }
-  // New (untracked or staged-new) file — unstage if staged, then unlink.
-  try {
-    await gitExec(repoDir, 'rm', '--cached', '--ignore-unmatch', '--', filePath)
-  } catch {
-    // Not staged — fine, fall through to unlink.
-  }
-  try {
-    await fs.rm(`${repoDir}/${filePath}`)
-  } catch {
-    // Already gone — fine.
-  }
-}
-
-async function fileInHead(repoDir: string, filePath: string): Promise<boolean> {
-  try {
-    await gitExec(repoDir, 'cat-file', '-e', `HEAD:${filePath}`)
-    return true
-  } catch {
-    return false
-  }
+  await discardPage(
+    (...args) => gitExec(repoDir, ...args),
+    filePath,
+    // Already gone is fine.
+    () => fs.rm(`${repoDir}/${filePath}`).catch(() => {}),
+  )
 }
 
 /**

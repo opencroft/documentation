@@ -102,7 +102,7 @@ async function draft(here: string, git: Git, path: string, content: string) {
 }
 
 function change(partial: Partial<TreeChange>): TreeChange {
-  return { renames: [], published: new Map(), drafts: new Map(), message: 'Change', ...partial }
+  return { renames: [], removals: [], published: new Map(), drafts: new Map(), message: 'Change', ...partial }
 }
 
 const AUTHOR = ['-c', 'user.name=Someone', '-c', 'user.email=']
@@ -235,4 +235,131 @@ test('moving a page that exists only as a draft commits nothing', {
   assert.equal(sha, null)
   assert.equal(await git('rev-parse', 'HEAD'), headBefore)
   assert.equal(await git('status', '--porcelain'), 'A  x/new.md\n')
+})
+
+test('deleting a folder commits every file in it gone with the meta, drops its drafts, and keeps other drafts', {
+  skip: !hasGit && 'git is not installed',
+}, async () => {
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0xff])
+  const { here, git, files, push, remote } = await setup({
+    '_meta.json': '{"order":["guides","b.md"]}\n',
+    'b.md': '# B\n',
+    'guides/_meta.json': '{"title":"Guides"}\n',
+    'guides/a.md': '# A\n',
+    'guides/img/x.png': png,
+  })
+  await draft(here, git, 'guides/a.md', '# A draft\n')
+  await draft(here, git, 'guides/new.md', '# New\n')
+  await writeFile(join(here, 'guides/scratch.md'), '# Not saved yet\n')
+  await draft(here, git, 'b.md', '# B draft\n')
+
+  const sha = await commitTreeChange(
+    git,
+    files,
+    change({
+      removals: ['guides'],
+      published: new Map([['_meta.json', '{"order":["b.md"]}\n']]),
+      message: 'Delete guides',
+    }),
+    AUTHOR,
+    push,
+  )
+
+  assert.ok(sha)
+  const remoteGit = gitIn(remote)
+  assert.equal(await remoteGit('ls-tree', '-r', '--name-only', 'main'), '_meta.json\nb.md\n')
+  assert.equal(await remoteGit('show', 'main:_meta.json'), '{"order":["b.md"]}\n')
+  assert.equal(await remoteGit('show', 'main:b.md'), '# B\n')
+  assert.equal(await remoteGit('log', '-1', '--format=%an %s', 'main'), 'Someone Delete guides\n')
+  assert.equal(await git('status', '--porcelain', '--untracked-files=all'), 'M  b.md\n')
+  assert.deepEqual(await readdir(here).then((names) => names.filter((n) => n !== '.git').sort()), [
+    '_meta.json',
+    'b.md',
+  ])
+})
+
+test('a failed push leaves a deleted folder as it was: committed files byte for byte, drafts and pages never saved', {
+  skip: !hasGit && 'git is not installed',
+}, async () => {
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0xff])
+  const { here, git, files, push, root, remote } = await setup({
+    '_meta.json': '{"order":["guides","b.md"]}\n',
+    'b.md': '# B\n',
+    'guides/a.md': '# A\n',
+    'guides/img/x.png': png,
+  })
+  // Someone else publishes first, so this clone's push is refused.
+  const other = join(root, 'other')
+  await run('git', ['clone', '--quiet', remote, other])
+  await writeFile(join(other, 'z.md'), '# Z\n')
+  await gitIn(other)('add', '-A')
+  await gitIn(other)('commit', '--quiet', '-m', 'other')
+  await gitIn(other)('push', '--quiet', 'origin', 'main')
+
+  await draft(here, git, 'guides/a.md', '# A draft\n')
+  await draft(here, git, 'guides/new.md', '# New\n')
+  await writeFile(join(here, 'guides/scratch.md'), '# Not saved yet\n')
+  const headBefore = await git('rev-parse', 'HEAD')
+  const statusBefore = await git('status', '--porcelain', '--untracked-files=all')
+
+  await assert.rejects(
+    commitTreeChange(
+      git,
+      files,
+      change({ removals: ['guides'], published: new Map([['_meta.json', '{"order":["b.md"]}\n']]) }),
+      AUTHOR,
+      push,
+    ),
+  )
+
+  assert.equal(await git('rev-parse', 'HEAD'), headBefore)
+  assert.equal(await git('status', '--porcelain', '--untracked-files=all'), statusBefore)
+  assert.equal(await readFile(join(here, 'guides/a.md'), 'utf-8'), '# A draft\n')
+  assert.equal(await git('show', ':guides/a.md'), '# A draft\n')
+  assert.equal(await git('show', ':guides/new.md'), '# New\n')
+  assert.equal(await readFile(join(here, 'guides/scratch.md'), 'utf-8'), '# Not saved yet\n')
+  assert.deepEqual(await readFile(join(here, 'guides/img/x.png')), png)
+  assert.equal(await readFile(join(here, '_meta.json'), 'utf-8'), '{"order":["guides","b.md"]}\n')
+})
+
+test('deleting a page that exists only as a draft removes it and commits nothing', {
+  skip: !hasGit && 'git is not installed',
+}, async () => {
+  const { here, git, files, push } = await setup({ 'a.md': '# A\n' })
+  await draft(here, git, 'notes/new.md', '# New\n')
+  const headBefore = await git('rev-parse', 'HEAD')
+
+  const sha = await commitTreeChange(git, files, change({ removals: ['notes/new.md'] }), AUTHOR, push)
+
+  assert.equal(sha, null)
+  assert.equal(await git('rev-parse', 'HEAD'), headBefore)
+  assert.equal(await git('status', '--porcelain', '--untracked-files=all'), '')
+  assert.deepEqual(await readdir(here).then((names) => names.filter((n) => n !== '.git')), ['a.md'])
+})
+
+test('deleting a folder whose name is a wildcard leaves the siblings it would match alone', {
+  skip: !hasGit && 'git is not installed',
+}, async () => {
+  const { here, git, files, push, remote } = await setup({ 'guide*/a.md': '# A\n', 'guides/b.md': '# B\n' })
+  await draft(here, git, 'guides/b.md', '# B draft\n')
+  await writeFile(join(here, 'guides/new.md'), '# Not saved yet\n')
+
+  const sha = await commitTreeChange(git, files, change({ removals: ['guide*'] }), AUTHOR, push)
+
+  assert.ok(sha)
+  assert.equal(await gitIn(remote)('ls-tree', '-r', '--name-only', 'main'), 'guides/b.md\n')
+  assert.equal(await git('status', '--porcelain', '--untracked-files=all'), 'M  guides/b.md\n?? guides/new.md\n')
+  assert.equal(await readFile(join(here, 'guides/new.md'), 'utf-8'), '# Not saved yet\n')
+})
+
+test('moving a folder whose name is a wildcard leaves the siblings it would match staged', {
+  skip: !hasGit && 'git is not installed',
+}, async () => {
+  const { here, git, files, push, remote } = await setup({ 'guide*/a.md': '# A\n', 'guides/b.md': '# B\n' })
+  await draft(here, git, 'guides/b.md', '# B draft\n')
+
+  await commitTreeChange(git, files, change({ renames: [{ from: 'guide*', to: 'manual' }] }), AUTHOR, push)
+
+  assert.equal(await gitIn(remote)('ls-tree', '-r', '--name-only', 'main'), 'guides/b.md\nmanual/a.md\n')
+  assert.equal(await git('status', '--porcelain', '--untracked-files=all'), 'M  guides/b.md\n')
 })

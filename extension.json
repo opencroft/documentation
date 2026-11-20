@@ -1,7 +1,7 @@
 {
   "id": "opencroft.documentation",
   "name": "Documentation",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Documentation App — clone, browse and edit a docs git repository added to a space.",
   "provides": {
     "apps": [
@@ -136,6 +136,21 @@
                 "title": { "type": "string", "description": "The folder's title." }
               },
               "required": ["path", "title"]
+            }
+          },
+          {
+            "id": "delete",
+            "description": "Delete a page, or a folder with everything in it, committed and pushed at once. Drafts of the deleted pages are dropped, for everyone editing one, and so are pages that were never published. Its name is taken out of its folder's meta file (`_meta.json`). Links to it are not changed: `unrewrittenLinks` lists every page that still links to it or mentions its path, with the line, to fix by hand. The answer's `sha` is the commit, null when only never-published pages went. Refused for the top level, or a path that names no page or folder.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "description": "Relative path of the page (`guides/intro.md`) or folder (`guides`) to delete."
+                },
+                "message": { "type": "string", "description": "Git commit message." }
+              },
+              "required": ["path", "message"]
             }
           },
           {
